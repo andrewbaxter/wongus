@@ -1,0 +1,15 @@
+[package]
+name = "wongus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aargvark = "0.2.1"
+http = "1.1.0"
+loga = "0.4.0"
+mime_guess = "2.0.4"
+serde = { version = "1.0.201", features = ["derive"] }
+serde_json = "1.0.117"
+tao = "0.28.0"
+tokio = { version = "1.37.0", features = ["rt", "process", "sync", "macros", "time", "io-util", "fs"] }
+wry = "0.39.4"
