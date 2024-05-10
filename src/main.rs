@@ -5,6 +5,15 @@ use {
         AargvarkFromStr,
         HelpPatternElement,
     },
+    gtk::{
+        glib::object::CastNone,
+        prelude::{
+            GtkWindowExt,
+            MonitorExt,
+            WidgetExt,
+        },
+    },
+    gtk_layer_shell::LayerShell,
     http::{
         header::CONTENT_TYPE,
         Response,
@@ -54,40 +63,50 @@ use {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum VecMode {
-    /// Pixels corresponding to device pixels
-    Physical,
-    /// Modified by scaling settings to produce physical pixels
-    Logical,
-    /// Percent of monitor size
-    Percent,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct XY {
-    mode: VecMode,
-    x: f64,
-    y: f64,
+enum P2 {
+    /// Not pixels, but a delusion that will become a pixel once a scaling factor is
+    /// applied.
+    Logical(i32),
+    /// Percent of monitor size (0-100).
+    Percent(f64),
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct Config {
     /// Monitor to put the wongus on.
-    monitor: Option<String>,
-    /// Where to place the wongus on the monitor.
-    ///
-    /// Note that if you use percent location, the percent is used for both the monitor
-    /// location and window origin, that is: `(0, 0)` will put the top-left corner of
-    /// the window in the top-left of the monitor, `(100, 100)` will put the
-    /// bottom-right corner of the window at the bottom-right of the monitor.
-    position: XY,
-    /// How big to make the wongus.
-    size: XY,
-    /// Display wongus on all workspaces, if you want
     #[serde(default)]
-    all_workspaces: bool,
+    monitor_index: Option<usize>,
+    /// Monitor to put the wongus on. Any monitor with the model containing this string
+    /// will match (case insensitive).
+    #[serde(default)]
+    monitor_model: Option<String>,
+    /// Attach the top of the window to the top of the screen, stretching if the
+    /// opposite is also attached.
+    #[serde(default)]
+    attach_top: bool,
+    /// Attach the right of the window to the right of the screen, stretching if the
+    /// opposite is also attached.
+    #[serde(default)]
+    attach_right: bool,
+    /// Attach the bottom of the window to the bottom of the screen, stretching if the
+    /// opposite is also attached.
+    #[serde(default)]
+    attach_bottom: bool,
+    /// Attach the left of the window to the left of the screen, stretching if the
+    /// opposite is also attached.
+    #[serde(default)]
+    attach_left: bool,
+    /// If left or right aren't attached, specify the window width.
+    #[serde(default)]
+    width: Option<P2>,
+    /// If top or bottom aren't attached, specify the window height.
+    #[serde(default)]
+    height: Option<P2>,
+    /// Enable keyboard interaction (enables keyboard focus, required for keyboard
+    /// interaction).
+    #[serde(default)]
+    enable_keyboard: bool,
 }
 
 struct ArgKv {
@@ -121,6 +140,7 @@ struct Args {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct IPCReqCommand {
     command: Vec<String>,
     #[serde(default)]
@@ -133,8 +153,9 @@ struct IPCReqCommand {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct IPCReqStreamCommand {
-    id: String,
+    id: usize,
     command: Vec<String>,
     #[serde(default)]
     working_dir: Option<String>,
@@ -143,6 +164,7 @@ struct IPCReqStreamCommand {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
 enum IPCReqBody {
     Log(String),
     Read(PathBuf),
@@ -151,8 +173,9 @@ enum IPCReqBody {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct IPCReq {
-    id: String,
+    id: usize,
     body: IPCReqBody,
 }
 
@@ -177,88 +200,102 @@ fn main() {
         let event_loop = event_loop::EventLoopBuilder::<String>::with_user_event().build();
 
         // Window
+        let display = gtk::gdk::Display::default().context("Couldn't open connection to display/windowing system")?;
         let monitor = 'found_monitor : loop {
-            if let Some(want_monitor) = config.monitor {
-                for m in event_loop.available_monitors() {
-                    if Some(&want_monitor) == m.name().as_ref() {
-                        break 'found_monitor m;
+            let mut monitors = vec![];
+            for i in 0 .. display.n_monitors() {
+                let m = display.monitor(i).and_downcast::<gtk::gdk::Monitor>().unwrap();
+                monitors.push(m);
+            }
+            if let Some(want_i) = config.monitor_index {
+                for (i, m) in monitors.iter().enumerate() {
+                    if want_i == i {
+                        break 'found_monitor m.clone();
                     }
                 }
             }
-            if let Some(m) = event_loop.primary_monitor() {
+            if let Some(text) = &config.monitor_model {
+                for m in &monitors {
+                    if m.model().unwrap_or_default().to_ascii_lowercase().contains(&text.to_ascii_lowercase()) {
+                        break 'found_monitor m.clone();
+                    }
+                }
+            }
+            if let Some(m) = display.primary_monitor() {
                 break 'found_monitor m;
-            };
-            if let Some(m) = event_loop.available_monitors().next() {
+            }
+            if let Some(m) = monitors.into_iter().next() {
                 break 'found_monitor m;
-            };
+            }
             return Err(loga::err("No monitors found"));
         };
-        let monitor_size = monitor.size();
-        let monitor_position = monitor.position();
-        let size = match config.size.mode {
-            VecMode::Physical => (config.size.x, config.size.y),
-            VecMode::Logical => (config.size.x * monitor.scale_factor(), config.size.y * monitor.scale_factor()),
-            VecMode::Percent => (
-                monitor_size.width as f64 * config.size.x,
-                monitor_size.height as f64 * config.size.y,
-            ),
-        };
-        let window = {
-            #[allow(unused_mut)]
-            let mut builder =
-                tao::window::WindowBuilder::new()
-                    .with_title("wongus")
-                    .with_decorations(false)
-                    .with_transparent(true)
-                    .with_resizable(false)
-                    .with_maximizable(false)
-                    .with_visible_on_all_workspaces(config.all_workspaces)
-                    .with_inner_size(tao::dpi::PhysicalSize {
-                        width: size.0,
-                        height: size.1,
-                    })
-                    .with_position(match config.position.mode {
-                        VecMode::Physical => tao::dpi::PhysicalPosition {
-                            x: monitor_position.x as f64 + config.position.x,
-                            y: monitor_position.y as f64 + config.position.y,
-                        },
-                        VecMode::Logical => tao::dpi::PhysicalPosition {
-                            x: monitor_position.y as f64 + config.position.x * monitor.scale_factor(),
-                            y: monitor_position.y as f64 + config.position.y * monitor.scale_factor(),
-                        },
-                        VecMode::Percent => {
-                            tao::dpi::PhysicalPosition {
-                                x: (monitor_size.width as f64 - size.0) * config.position.x,
-                                y: (monitor_size.height as f64 - size.1) * config.position.y,
-                            }
-                        },
-                    });
-            #[cfg(target_os = "windows")]
-            {
-                use tao::platform::windows::WindowBuilderExtWindows;
-
-                builder = builder.with_undecorated_shadow(false);
+        let window = tao::window::WindowBuilder::new().build(&event_loop).unwrap();
+        {
+            let window = window.gtk_window();
+            window.init_layer_shell();
+            window.set_monitor(&monitor);
+            window.set_layer(gtk_layer_shell::Layer::Top);
+            window.auto_exclusive_zone_enable();
+            window.set_anchor(gtk_layer_shell::Edge::Top, config.attach_top);
+            window.set_anchor(gtk_layer_shell::Edge::Right, config.attach_right);
+            window.set_anchor(gtk_layer_shell::Edge::Bottom, config.attach_bottom);
+            window.set_anchor(gtk_layer_shell::Edge::Left, config.attach_left);
+            if config.attach_left && config.attach_right {
+                if config.width.is_some() {
+                    return Err(
+                        loga::err(
+                            "Both left and right sides of the window are attached to edges, width cannot be used but it is set in the config (should be null)",
+                        ),
+                    );
+                }
+            } else {
+                let Some(width) = config.width else {
+                    return Err(
+                        loga::err(
+                            "Left or right window edge attachments aren't set so the width is not decided but width is missing from the config",
+                        ),
+                    );
+                };
+                window.set_width_request(match width {
+                    P2::Logical(x) => x,
+                    P2::Percent(p) => (monitor.geometry().width() as f64 * p / 100.).ceil() as i32,
+                });
             }
-            let window = builder.build(&event_loop).unwrap();
-            #[cfg(target_os = "windows")]
-            {
-                use tao::platform::windows::WindowExtWindows;
-
-                window.set_undecorated_shadow(true);
+            if config.attach_top && config.attach_bottom {
+                if config.height.is_some() {
+                    return Err(
+                        loga::err(
+                            "Both left and right sides of the window are attached to edges, height cannot be used but it is set in the config (should be null)",
+                        ),
+                    );
+                }
+            } else {
+                let Some(height) = config.height else {
+                    return Err(
+                        loga::err(
+                            "Left or right window edge attachments aren't set so the height is not decided but height is missing from the config",
+                        ),
+                    );
+                };
+                window.set_height_request(match height {
+                    P2::Logical(x) => x,
+                    P2::Percent(p) => (monitor.geometry().height() as f64 * p / 100.).ceil() as i32,
+                });
             }
-            window
+            window.set_resizable(false);
+            window.set_skip_pager_hint(true);
+            window.set_skip_taskbar_hint(true);
+            window.set_deletable(false);
+            window.set_keyboard_interactivity(config.enable_keyboard);
+            window.set_decorated(false);
         };
 
         // Webview
         let (ipc_req_tx, mut ipc_req_rx) = unbounded_channel::<Vec<u8>>();
         let webview = {
-            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android"))]
-            let builder = WebViewBuilder::new(&window);
-            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
-            const PROTO: &str = "local";
             let webview = wry::WebViewBuilder::new_gtk(window.default_vbox().unwrap())
                 //. .
-                .with_transparent(true)
+                //. .with_transparent(true)
                 //. .
                 .with_ipc_handler({
                     move |req| {
@@ -266,57 +303,61 @@ fn main() {
                     }
                 })
                 //. .
-                .with_initialization_script(include_str!("ipc_setup.js"))
+                .with_initialization_script(include_str!("setup.js"))
                 //. .
                 .with_back_forward_navigation_gestures(false)
-                // Needed to intercept non-page errors
-                .with_custom_protocol(PROTO.to_string(), {
+                // Custom proto:
+                //
+                // 1. to avoid panic due to triple-slash in `file:///`:
+                //    https://github.com/tauri-apps/wry/issues/1255
+                //
+                // 2. to intercept and log errors
+                .with_asynchronous_custom_protocol("filex".into(), {
                     let log = log.clone();
-                    move |request| {
-                        match (|| -> Result<http::Response<Cow<'static, [u8]>>, loga::Error> {
+                    move |request, responder| {
+                        match (|| -> Result<http::Response<Cow<[u8]>>, loga::Error> {
                             let path = request.uri().path();
-                            eprintln!("req {}", request.uri());
                             return Ok(
                                 Response::builder()
                                     .header(
                                         CONTENT_TYPE,
                                         mime_guess::from_path(&path).first_or_text_plain().essence_str(),
                                     )
-                                    .body(Cow::Owned(std::fs::read(&path).context("Error reading requested path")?))
+                                    .body(
+                                        Cow::Owned(
+                                            std::fs::read(
+                                                path,
+                                            ).context_with("Error reading requested file", ea!(path = path))?,
+                                        ),
+                                    )
                                     .unwrap(),
                             );
                         })() {
-                            Ok(r) => {
-                                return r;
-                            },
+                            Ok(r) => responder.respond(r),
                             Err(e) => {
-                                let e = e.context("Failed to load local path");
+                                let e = e.context("Error making request");
                                 log.log_err(StandardFlag::Warning, e.clone());
-                                return http::Response::builder()
-                                    .header(CONTENT_TYPE, "text/plain")
-                                    .status(500)
-                                    .body(Cow::Owned(e.to_string().as_bytes().to_vec()))
-                                    .unwrap();
+                                responder.respond(
+                                    http::Response::builder()
+                                        .header(CONTENT_TYPE, "text/plain")
+                                        .status(500)
+                                        .body(e.to_string().as_bytes().to_vec())
+                                        .unwrap(),
+                                );
                             },
                         }
                     }
                 })
                 //. .
-                .with_url(
-                    format!(
-                        "{}://{}",
-                        PROTO,
-                        content_root.join("index.html").to_str().context("Content root path must be utf-8")?
-                    ),
-                )
+                .with_url(format!(
+                    "filex://x{}",
+                    //. PROTO,
+                    content_root.join("index.html").to_str().context("Content root path must be utf-8")?
+                ))
                 //. .
-                .build()
-                .context("Error initializing webview")?;
+                .build().context("Error initializing webview")?;
             webview
         };
-
-        // IPC processing
-        webview.evaluate_script(include_str!("ipc_setup.js")).context("Error executing ipc setup script")?;
         {
             let mut script = vec![];
             for (k, v) in env::vars() {
@@ -339,16 +380,28 @@ fn main() {
             }
             webview.evaluate_script(&script.join("")).context("Error executing env/args setup script")?;
         }
+
+        // IPC processing
         spawn({
             let ipc_resp = event_loop.create_proxy();
-            let rt = tokio::runtime::Builder::new_current_thread().build().context("Error starting ipc processor")?;
+            let rt =
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .context("Error starting ipc processor")?;
             let log = log.clone();
             move || rt.block_on(async move {
                 while let Some(req) = ipc_req_rx.recv().await {
                     let req = match serde_json::from_slice::<IPCReq>(&req) {
                         Ok(r) => r,
                         Err(e) => {
-                            log.log_err(StandardFlag::Warning, e.context("Assertion! Error parsing IPC request"));
+                            log.log_err(
+                                StandardFlag::Warning,
+                                e.context_with(
+                                    "Assertion! Error parsing IPC request",
+                                    ea!(req = String::from_utf8_lossy(&req)),
+                                ),
+                            );
                             return;
                         },
                     };
@@ -360,15 +413,17 @@ fn main() {
                                 match req.body {
                                     IPCReqBody::Log(message) => {
                                         log.log(StandardFlag::Info, format!("console.log: {}", message));
-                                        return Ok("{}".to_string());
+                                        return Ok(json!({ }));
                                     },
                                     IPCReqBody::Read(path) => {
                                         return Ok(
-                                            serde_json::to_string(
-                                                &tokio::fs::read(&path)
-                                                    .await
-                                                    .context("Error performing read command")?,
-                                            ).unwrap(),
+                                            json!(
+                                                &String::from_utf8(
+                                                    tokio::fs::read(&path)
+                                                        .await
+                                                        .context("Error performing read command")?,
+                                                ).context("File isn't valid utf-8")?
+                                            ),
                                         );
                                     },
                                     IPCReqBody::RunCommand(req) => {
@@ -404,10 +459,10 @@ fn main() {
                                             String::from_utf8(
                                                 res.stderr,
                                             ).stack_context(&log, "stderr was not valid utf-8")?;
-                                        return Ok(serde_json::to_string(&json!({
+                                        return Ok(json!({
                                             "stdout": stdout,
                                             "stderr": stderr
-                                        })).unwrap());
+                                        }));
                                     },
                                     IPCReqBody::StreamCommand(req) => {
                                         tokio::spawn({
@@ -419,6 +474,7 @@ fn main() {
                                                         return Err(loga::err("Commandline is empty"));
                                                     }
                                                     let mut command = Command::new(&req.command[0]);
+                                                    command.stdout(std::process::Stdio::piped());
                                                     command.args(&req.command[1..]);
                                                     if let Some(cwd) = req.working_dir {
                                                         command.current_dir(&cwd);
@@ -428,7 +484,10 @@ fn main() {
                                                     }
                                                     let log =
                                                         StandardLog::new().fork(ea!(command = command.dbg_str()));
-                                                    let mut proc = command.spawn().context("Error starting command")?;
+                                                    let mut proc =
+                                                        command
+                                                            .spawn()
+                                                            .stack_context(&log, "Error starting command")?;
                                                     let reader = BufReader::new(proc.stdout.take().unwrap());
                                                     let mut lines = reader.lines();
                                                     loop {
@@ -436,9 +495,9 @@ fn main() {
                                                             Ok(Some(line)) => {
                                                                 match ipc_resp.send_event(
                                                                     format!(
-                                                                        "(window._wongus.stream_cbs.get(\"{}\"))(\"{}\");",
+                                                                        "(window._wongus.stream_cbs.get({}))({});",
                                                                         req.id,
-                                                                        line
+                                                                        serde_json::to_string(&line).unwrap()
                                                                     ),
                                                                 ) {
                                                                     Ok(_) => { },
@@ -454,7 +513,9 @@ fn main() {
                                                                 break;
                                                             },
                                                             Err(e) => {
-                                                                return Err(e.context("Error reading lines"));
+                                                                return Err(
+                                                                    e.stack_context(&log, "Error reading lines"),
+                                                                );
                                                             },
                                                         }
                                                     }
@@ -475,17 +536,21 @@ fn main() {
                                                 }
                                             }
                                         });
-                                        return Ok(serde_json::to_string(&json!({ })).unwrap());
+                                        return Ok(json!({ }));
                                     },
                                 }
                             }.await {
                                 Ok(r) => r,
-                                Err(e) => serde_json::to_string(&json!({
+                                Err(e) => json!({
                                     "err": e.to_string()
-                                })).unwrap(),
+                                }),
                             };
                             match ipc_resp.send_event(
-                                format!("(window._wongus.responses.get(\"{}\"))(\"{}\");", req.id, resp),
+                                format!(
+                                    "(window._wongus.responses.get({}))({});",
+                                    req.id,
+                                    serde_json::to_string(&resp).unwrap()
+                                ),
                             ) {
                                 Ok(_) => { },
                                 Err(e) => {
@@ -504,7 +569,7 @@ fn main() {
             match event {
                 Event::UserEvent(script) => {
                     match webview.evaluate_script(&script) {
-                        Ok(_) => todo!(),
+                        Ok(_) => { },
                         Err(e) => {
                             log.log_err(StandardFlag::Error, e.context("Error executing ipc response script"));
                         },
