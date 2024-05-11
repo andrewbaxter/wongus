@@ -46,7 +46,10 @@ use {
             self,
             ControlFlow,
         },
-        platform::unix::WindowExtUnix,
+        platform::unix::{
+            WindowBuilderExtUnix,
+            WindowExtUnix,
+        },
     },
     tokio::{
         io::{
@@ -107,6 +110,9 @@ struct Config {
     /// interaction).
     #[serde(default)]
     enable_keyboard: bool,
+    /// Window title.
+    #[serde(default)]
+    title: Option<String>,
 }
 
 struct ArgKv {
@@ -229,7 +235,16 @@ fn main() {
             }
             return Err(loga::err("No monitors found"));
         };
-        let window = tao::window::WindowBuilder::new().with_transparent(true).build(&event_loop).unwrap();
+        let window =
+            tao::window::WindowBuilder::new()
+                .with_transparent(true)
+                .with_skip_taskbar(true)
+                .with_resizable(false)
+                .with_decorations(false)
+                .with_focused(false)
+                .with_title(config.title.as_ref().map(|x| x.as_str()).unwrap_or("This is a wongus"))
+                .build(&event_loop)
+                .unwrap();
         {
             let window = window.gtk_window();
             window.init_layer_shell();
@@ -282,12 +297,9 @@ fn main() {
                     P2::Percent(p) => (monitor.geometry().height() as f64 * p / 100.).ceil() as i32,
                 });
             }
-            window.set_resizable(false);
             window.set_skip_pager_hint(true);
-            window.set_skip_taskbar_hint(true);
             window.set_deletable(false);
             window.set_keyboard_interactivity(config.enable_keyboard);
-            window.set_decorated(false);
         };
 
         // Webview
