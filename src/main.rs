@@ -229,7 +229,7 @@ fn main() {
             }
             return Err(loga::err("No monitors found"));
         };
-        let window = tao::window::WindowBuilder::new().build(&event_loop).unwrap();
+        let window = tao::window::WindowBuilder::new().with_transparent(true).build(&event_loop).unwrap();
         {
             let window = window.gtk_window();
             window.init_layer_shell();
@@ -306,6 +306,8 @@ fn main() {
                 .with_initialization_script(include_str!("setup.js"))
                 //. .
                 .with_back_forward_navigation_gestures(false)
+                //. .
+                .with_devtools(true)
                 // Custom proto:
                 //
                 // 1. to avoid panic due to triple-slash in `file:///`:
