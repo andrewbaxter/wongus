@@ -295,7 +295,7 @@ fn main() {
         let webview = {
             let webview = wry::WebViewBuilder::new_gtk(window.default_vbox().unwrap())
                 //. .
-                //. .with_transparent(true)
+                .with_transparent(true)
                 //. .
                 .with_ipc_handler({
                     move |req| {
