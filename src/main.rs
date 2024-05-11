@@ -481,27 +481,23 @@ fn main() {
                                     IPCReqBody::StreamCommand(req) => {
                                         tokio::spawn({
                                             let ipc_resp = ipc_resp.clone();
-                                            let log = log.clone();
+                                            if req.command.is_empty() {
+                                                return Err(loga::err("Commandline is empty"));
+                                            }
+                                            let mut command = Command::new(&req.command[0]);
+                                            command.stdout(std::process::Stdio::piped());
+                                            command.args(&req.command[1..]);
+                                            if let Some(cwd) = req.working_dir {
+                                                command.current_dir(&cwd);
+                                            }
+                                            for (k, v) in req.environment {
+                                                command.env(k, v);
+                                            }
+                                            let log = StandardLog::new().fork(ea!(command = command.dbg_str()));
+                                            let mut proc =
+                                                command.spawn().stack_context(&log, "Error starting command")?;
                                             async move {
                                                 match async {
-                                                    if req.command.is_empty() {
-                                                        return Err(loga::err("Commandline is empty"));
-                                                    }
-                                                    let mut command = Command::new(&req.command[0]);
-                                                    command.stdout(std::process::Stdio::piped());
-                                                    command.args(&req.command[1..]);
-                                                    if let Some(cwd) = req.working_dir {
-                                                        command.current_dir(&cwd);
-                                                    }
-                                                    for (k, v) in req.environment {
-                                                        command.env(k, v);
-                                                    }
-                                                    let log =
-                                                        StandardLog::new().fork(ea!(command = command.dbg_str()));
-                                                    let mut proc =
-                                                        command
-                                                            .spawn()
-                                                            .stack_context(&log, "Error starting command")?;
                                                     let reader = BufReader::new(proc.stdout.take().unwrap());
                                                     let mut lines = reader.lines();
                                                     loop {
