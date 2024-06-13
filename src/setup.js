@@ -29,8 +29,10 @@ const wongus_ipc = (args) => {
   // Send req
   window.ipc.postMessage(
     JSON.stringify({
-      id: id,
-      body: args,
+      window: {
+        id: id,
+        body: args,
+      },
     })
   );
 
@@ -38,9 +40,43 @@ const wongus_ipc = (args) => {
   return out;
 };
 
+window._wongus.external_ipc = (id, args) => {
+  try {
+    const value = window.wongus.handle_external_ipc(args);
+    window.ipc.postMessage(
+      JSON.stringify({
+        external: {
+          id: id,
+          body: {
+            ok: value,
+          },
+        },
+      })
+    );
+  } catch (e) {
+    window.ipc.postMessage(
+      JSON.stringify({
+        external: {
+          id: id,
+          body: {
+            err: e.toString(),
+          },
+        },
+      })
+    );
+  }
+};
+
 window.wongus = {
   env: new Map(),
   args: new Map(),
+  log: async (message) => {
+    var message1 = message;
+    if (!(message instanceof String)) {
+      message = JSON.stringify(message);
+    }
+    return await wongus_ipc({ log: message });
+  },
   read: async (path) => {
     return await wongus_ipc({ read: path });
   },
@@ -55,9 +91,5 @@ window.wongus = {
     window._wongus.stream_cbs.set(cb_id, cb);
     return await wongus_ipc({ stream_command: args });
   },
-};
-const old_log = window.console.log;
-window.console.log = (...args) => {
-  old_log(...args);
-  wongus_ipc({ log: args.map((a) => String(a)).join(" ") });
+  handle_external_ipc: null,
 };

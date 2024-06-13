@@ -8,6 +8,10 @@ aargvark = "0.2"
 gtk = { version = "0.18", features = ["v3_24"] }
 gtk-layer-shell = "0.8"
 http = "1"
+htwrap = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+http-body-util = "0.1"
 loga = "0.4"
 mime_guess = "2"
 serde = { version = "1", features = ["derive"] }
@@ -23,3 +27,7 @@ tokio = { version = "1", features = [
     "fs",
 ] }
 wry = "0.39"
+
+[patch.crates-io]
+tao = { git = "https://github.com/andrewbaxter/fork-tao", rev = "49eea9dc2589cf02c4126ffd4fcd2a7e7b5c8476" }
+tao-macros = { git = "https://github.com/andrewbaxter/fork-tao", rev = "49eea9dc2589cf02c4126ffd4fcd2a7e7b5c8476" }

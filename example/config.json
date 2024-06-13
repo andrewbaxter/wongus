@@ -1,0 +1,10 @@
+{
+    "attach_right": true,
+    "width": {
+        "logical": 45
+    },
+    "height": {
+        "percent": 100
+    },
+    "listen": "wongus_ipc.sock"
+}
