@@ -495,7 +495,7 @@ fn main() {
                                         let resp = match async {
                                             match req.body {
                                                 IPCReqBody::Log(message) => {
-                                                    log.log(StandardFlag::Info, format!("console.log: {}", message));
+                                                    log.log(StandardFlag::Info, format!("wongus.log: {}", message));
                                                     return Ok(json!({ }));
                                                 },
                                                 IPCReqBody::Read(path) => {

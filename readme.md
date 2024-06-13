@@ -1,6 +1,6 @@
 # wongus
 
-This is a desktop panel... bar thing. Make buttons, show window titles, add sliders and other widgets, so on and so forth.
+This is a Wayland desktop panel... bar thing. Make buttons, show window titles, add sliders and other widgets, so on and so forth.
 
 I was trying `eww` when I realized I hated GTK's poor imitation of web standards even more than I hated web standards, and this was born.
 
@@ -61,6 +61,8 @@ Clone and `cargo build --release`, which will create `target/release/wongus`. Yo
 
 3. Create `index.html` (and `style.css` and `script.js` and any other assets - you _must_ have `index.html` though), and add any other assets you want: images, fonts
 4. Run `wongus /path/to/your/dir`
+
+There's an example config dir in `example/` - try it out with `wongus ./example/`!
 
 # Javascript API
 
