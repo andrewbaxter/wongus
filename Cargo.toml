@@ -33,5 +33,5 @@ tokio = { version = "1", features = [
 wry = "0.39"
 
 [patch.crates-io]
-tao = { git = "https://github.com/andrewbaxter/fork-tao", rev = "49eea9dc2589cf02c4126ffd4fcd2a7e7b5c8476" }
-tao-macros = { git = "https://github.com/andrewbaxter/fork-tao", rev = "49eea9dc2589cf02c4126ffd4fcd2a7e7b5c8476" }
+tao = { git = "https://github.com/andrewbaxter/fork-tao", rev = "80e1008438d57b72921192ff44ffc252ab676edb" }
+tao-macros = { git = "https://github.com/andrewbaxter/fork-tao", rev = "80e1008438d57b72921192ff44ffc252ab676edb" }
