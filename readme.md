@@ -82,6 +82,8 @@ Write a message to the stderr of wongus. Useful for external monitoring.
 
 ## `wongus.run_command`
 
+This runs a short-lived command and returns its output, for instantaneous tasks like switching desktops or running a script to check the weather.
+
 ```js
 const res = await wongus.run_command({
   command: ["echo", "hi"],
@@ -93,7 +95,24 @@ console.log(res.stdout); // string
 console.log(res.stderr); // string
 ```
 
+## `wongus.run_independent`
+
+This is the intended for spawning desktop applications like terminals, browsers, etc.
+
+This runs a command as a child process and then throws away the handle. The child process will still be killed if `wongus` is, but nothing else about its lifecycle or result are managed. You may want to consider using `run_command` with `systemd-run` or something instead which will make the child fully independent, manage logs, capture exit status, etc.
+
+```js
+const res = await wongus.run_independent({
+  command: ["echo", "hi"],
+  working_dir: "/somewhere/over/the/rainbow", // Optional
+  environment: { KEY: "value" }, // Optional
+});
+console.log(res.pid); // number
+```
+
 ## `wongus.stream_command`
+
+This runs a command and calls the callback whenever it writes a line of output to stdout.
 
 ```js
 const res = await wongus.run_command({

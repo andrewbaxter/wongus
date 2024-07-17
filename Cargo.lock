@@ -3858,7 +3858,7 @@ dependencies = [
 
 [[package]]
 name = "wongus"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aargvark 0.2.2",
  "gtk",

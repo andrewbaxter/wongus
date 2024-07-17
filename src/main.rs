@@ -69,7 +69,13 @@ use {
             ControlFlow,
             EventLoopProxy,
         },
-        platform::run_return::EventLoopExtRunReturn,
+        platform::{
+            run_return::EventLoopExtRunReturn,
+            unix::{
+                EventLoopWindowTargetExtUnix,
+                WindowExtUnix,
+            },
+        },
     },
     tokio::{
         io::{
@@ -176,8 +182,10 @@ struct Args {
 #[serde(rename_all = "snake_case")]
 struct IPCReqCommand {
     command: Vec<String>,
+    /// By default uses the working directory of `wongus`.
     #[serde(default)]
     working_dir: Option<String>,
+    /// Add to environment inherited from `wongus` process.
     #[serde(default)]
     environment: HashMap<String, String>,
     /// Timeout command if it takes too long; defaults to 10s.
@@ -187,11 +195,25 @@ struct IPCReqCommand {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
+struct IPCReqIndependentCommand {
+    command: Vec<String>,
+    /// By default uses the working directory of `wongus`.
+    #[serde(default)]
+    working_dir: Option<String>,
+    /// Add to environment inherited from `wongus` process.
+    #[serde(default)]
+    environment: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct IPCReqStreamCommand {
     id: usize,
     command: Vec<String>,
+    /// By default uses the working directory of `wongus`.
     #[serde(default)]
     working_dir: Option<String>,
+    /// Add to environment inherited from `wongus` process.
     #[serde(default)]
     environment: HashMap<String, String>,
 }
@@ -202,6 +224,7 @@ enum IPCReqBody {
     Log(String),
     Read(PathBuf),
     RunCommand(IPCReqCommand),
+    RunIndependent(IPCReqIndependentCommand),
     StreamCommand(IPCReqStreamCommand),
 }
 
@@ -288,7 +311,7 @@ fn main() {
             }
             return Err(loga::err("No monitors found"));
         };
-        let gtk_window = gtk::ApplicationWindow::new(event_loop.deref().platform_window_target().app());
+        let gtk_window = gtk::ApplicationWindow::new(event_loop.deref().gtk_app());
         gtk_window.init_layer_shell();
         gtk_window.set_monitor(&monitor);
         gtk_window.set_layer(gtk_layer_shell::Layer::Top);
@@ -355,8 +378,7 @@ fn main() {
         let default_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
         gtk_window.add(&default_vbox);
         gtk_window.show_all();
-        let window =
-            tao::platform_impl::Window::new_from_gtk_window(event_loop.deref().platform_window_target(), gtk_window);
+        let window = tao::window::Window::new_from_gtk_window(event_loop.deref(), gtk_window).unwrap();
         window.set_skip_taskbar(true);
 
         // Webview
@@ -552,6 +574,30 @@ fn main() {
                                                     return Ok(json!({
                                                         "stdout": stdout,
                                                         "stderr": stderr
+                                                    }));
+                                                },
+                                                IPCReqBody::RunIndependent(req) => {
+                                                    if req.command.is_empty() {
+                                                        return Err(loga::err("Commandline is empty"));
+                                                    }
+                                                    let mut command = Command::new(&req.command[0]);
+                                                    command.args(&req.command[1..]);
+                                                    if let Some(cwd) = req.working_dir {
+                                                        command.current_dir(&cwd);
+                                                    }
+                                                    for (k, v) in req.environment {
+                                                        command.env(k, v);
+                                                    }
+                                                    let pid =
+                                                        command
+                                                            .spawn()
+                                                            .context_with(
+                                                                "Error starting command",
+                                                                ea!(command = command.dbg_str()),
+                                                            )?
+                                                            .id();
+                                                    return Ok(json!({
+                                                        "pid": pid
                                                     }));
                                                 },
                                                 IPCReqBody::StreamCommand(req) => {
