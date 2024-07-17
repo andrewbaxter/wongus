@@ -64,6 +64,8 @@ Clone and `cargo build --release`, which will create `target/release/wongus`. Yo
 
 There's an example config dir in `example/` - try it out with `wongus ./example/`!
 
+You can alternatively (instead of serving static files) serve content from a server using `--server http://127.0.0.1:8080`. Static content in `/path/to/your/dir` will be ignored.
+
 # Javascript API
 
 Wongus adds a few things to `window` which are of particular relevance to panel bar thing designers.

@@ -173,6 +173,9 @@ impl AargvarkFromStr for ArgKv {
 struct Args {
     /// Directory containing config.json, index.html and any other assets.
     content_root: PathBuf,
+    /// URL of a server to serve content from instead of `content_root`. `content_root`
+    /// will still be used for the config json, but the remaining files will be ignored.
+    server: Option<String>,
     debug: Option<()>,
     /// Additional arguments to be passed to the script.
     args: Vec<ArgKv>,
@@ -384,72 +387,69 @@ fn main() {
         // Webview
         let (ipc_req_tx, mut ipc_req_rx) = unbounded_channel::<Vec<u8>>();
         let webview = {
-            let webview = wry::WebViewBuilder::new_gtk(&default_vbox)
-                //. .
-                .with_transparent(true)
-                //. .
-                .with_ipc_handler({
-                    move |req| {
-                        _ = ipc_req_tx.send(req.into_body().into_bytes());
-                    }
-                })
-                //. .
-                .with_initialization_script(include_str!("setup.js"))
-                //. .
-                .with_back_forward_navigation_gestures(false)
-                //. .
-                .with_devtools(true)
-                // Custom proto:
-                //
-                // 1. to avoid panic due to triple-slash in `file:///`:
-                //    https://github.com/tauri-apps/wry/issues/1255
-                //
-                // 2. to intercept and log errors
-                .with_asynchronous_custom_protocol("filex".into(), {
-                    let log = log.clone();
-                    move |request, responder| {
-                        match (|| -> Result<http::Response<Cow<[u8]>>, loga::Error> {
-                            let path = request.uri().path();
-                            return Ok(
-                                Response::builder()
-                                    .header(
-                                        CONTENT_TYPE,
-                                        mime_guess::from_path(&path).first_or_text_plain().essence_str(),
-                                    )
-                                    .body(
-                                        Cow::Owned(
-                                            std::fs::read(
-                                                path,
-                                            ).context_with("Error reading requested file", ea!(path = path))?,
-                                        ),
-                                    )
+            let mut webview = wry::WebViewBuilder::new_gtk(&default_vbox);
+            webview = webview.with_transparent(true);
+            webview = webview.with_ipc_handler({
+                move |req| {
+                    _ = ipc_req_tx.send(req.into_body().into_bytes());
+                }
+            });
+            webview = webview.with_initialization_script(include_str!("setup.js"));
+            webview = webview.with_back_forward_navigation_gestures(false);
+            webview = webview.with_devtools(true);
+
+            // Custom proto:
+            //
+            // 1. to avoid panic due to triple-slash in `file:///`:
+            //    https://github.com/tauri-apps/wry/issues/1255
+            //
+            // 2. to intercept and log errors
+            webview = webview.with_asynchronous_custom_protocol("filex".into(), {
+                let log = log.clone();
+                move |request, responder| {
+                    match (|| -> Result<http::Response<Cow<[u8]>>, loga::Error> {
+                        let path = request.uri().path();
+                        return Ok(
+                            Response::builder()
+                                .header(
+                                    CONTENT_TYPE,
+                                    mime_guess::from_path(&path).first_or_text_plain().essence_str(),
+                                )
+                                .body(
+                                    Cow::Owned(
+                                        std::fs::read(
+                                            path,
+                                        ).context_with("Error reading requested file", ea!(path = path))?,
+                                    ),
+                                )
+                                .unwrap(),
+                        );
+                    })() {
+                        Ok(r) => responder.respond(r),
+                        Err(e) => {
+                            let e = e.context("Error making request");
+                            log.log_err(StandardFlag::Warning, e.clone());
+                            responder.respond(
+                                http::Response::builder()
+                                    .header(CONTENT_TYPE, "text/plain")
+                                    .status(500)
+                                    .body(e.to_string().as_bytes().to_vec())
                                     .unwrap(),
                             );
-                        })() {
-                            Ok(r) => responder.respond(r),
-                            Err(e) => {
-                                let e = e.context("Error making request");
-                                log.log_err(StandardFlag::Warning, e.clone());
-                                responder.respond(
-                                    http::Response::builder()
-                                        .header(CONTENT_TYPE, "text/plain")
-                                        .status(500)
-                                        .body(e.to_string().as_bytes().to_vec())
-                                        .unwrap(),
-                                );
-                            },
-                        }
+                        },
                     }
-                })
-                //. .
-                .with_url(format!(
+                }
+            });
+            if let Some(url) = args.server {
+                webview = webview.with_url(url);
+            } else {
+                webview = webview.with_url(format!(
                     "filex://x{}",
                     //. PROTO,
                     content_root.join("index.html").to_str().context("Content root path must be utf-8")?
-                ))
-                //. .
-                .build().context("Error initializing webview")?;
-            webview
+                ));
+            }
+            webview.build().context("Error initializing webview")?
         };
 
         // More js initialization (dynamic)
