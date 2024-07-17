@@ -83,8 +83,8 @@ window.wongus = {
   run_command: async (args) => {
     return await wongus_ipc({ run_command: args });
   },
-  run_detached_command: async (args) => {
-    return await wongus_ipc({ run_detached_command: args });
+  run_independent: async (args) => {
+    return await wongus_ipc({ run_independent: args });
   },
   stream_command: async (args) => {
     const cb = args.cb;
