@@ -8,19 +8,19 @@ repository = "https://github.com/andrewbaxter/wongus"
 license = "ISC"
 
 [dependencies]
-aargvark = "0.2"
+aargvark = "0.6"
 gtk = { version = "0.18", features = ["v3_24"] }
 gtk-layer-shell = "0.8"
 http = "1"
-htwrap = "0.1"
+htwrap = "0.11"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 http-body-util = "0.1"
-loga = "0.4"
+loga = "0.5"
 mime_guess = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tao = "0.28"
+tao = "0.31"
 tokio = { version = "1", features = [
     "rt",
     "process",
@@ -30,8 +30,4 @@ tokio = { version = "1", features = [
     "io-util",
     "fs",
 ] }
-wry = "0.39"
-
-[patch.crates-io]
-tao = { git = "https://github.com/andrewbaxter/fork-tao", rev = "80e1008438d57b72921192ff44ffc252ab676edb" }
-tao-macros = { git = "https://github.com/andrewbaxter/fork-tao", rev = "80e1008438d57b72921192ff44ffc252ab676edb" }
+wry = "0.48"

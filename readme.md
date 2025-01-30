@@ -16,6 +16,13 @@ Clone and `cargo build --release`, which will create `target/release/wongus`. Yo
 2. In the stuff directory, create `config.json` (actually see `src/main.rs` `struct Config` for the source, but hopefully I'll remember to keep this up to date):
 
    ```rust
+   enum P2 {
+      /// Not pixels, but a delusion that will become a pixel once a scaling factor is
+      /// applied.
+      Logical(i32),
+      /// Percent of monitor size (0-100).
+      Percent(f64),
+   }
    struct Config {
       /// Monitor to put the wongus on.
       #[serde(default)]
@@ -59,6 +66,8 @@ Clone and `cargo build --release`, which will create `target/release/wongus`. Yo
    }
    ```
 
+   P2 is used like `"height": { "percent": 100 }`
+
 3. Create `index.html` (and `style.css` and `script.js` and any other assets - you _must_ have `index.html` though), and add any other assets you want: images, fonts
 4. Run `wongus /path/to/your/dir`
 
@@ -67,6 +76,12 @@ There's an example config dir in `example/` - try it out with `wongus ./example/
 You can alternatively (instead of serving static files) serve content from a server using `--server http://127.0.0.1:8080`. Static content in `/path/to/your/dir` will be ignored.
 
 # Javascript API
+
+This documentation might get out of sync - but you can use the provided `wongus.d.ts` file like:
+
+```
+/// <reference path="../wongus/wongus.d.ts" />
+```
 
 Wongus adds a few things to `window` which are of particular relevance to panel bar thing designers.
 
@@ -97,7 +112,7 @@ console.log(res.stdout); // string
 console.log(res.stderr); // string
 ```
 
-## `wongus.run_independent`
+## `wongus.run_detached_command`
 
 This is the intended for spawning desktop applications like terminals, browsers, etc.
 
@@ -117,7 +132,7 @@ console.log(res.pid); // number
 This runs a command and calls the callback whenever it writes a line of output to stdout.
 
 ```js
-const res = await wongus.run_command({
+wongus.stream_command({
   command: ["echo", "hi"],
   cb: (line) => {
     // callback, called for each new line of output

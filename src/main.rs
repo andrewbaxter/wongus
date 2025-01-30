@@ -1,9 +1,13 @@
 use {
     aargvark::{
+        help::{
+            HelpPattern,
+            HelpPatternElement,
+            HelpState,
+        },
+        traits_impls::AargvarkFromStr,
         vark,
         Aargvark,
-        AargvarkFromStr,
-        HelpPatternElement,
     },
     gtk::{
         glib::object::CastNone,
@@ -21,7 +25,7 @@ use {
         Response,
     },
     http_body_util::BodyExt,
-    htwrap::htserve::{
+    htwrap::htserve::responses::{
         response_200_json,
         response_400,
         response_503,
@@ -34,9 +38,8 @@ use {
         fatal,
         DebugDisplay,
         ErrContext,
+        Log,
         ResultContext,
-        StandardFlag,
-        StandardLog,
     },
     serde::Deserialize,
     serde_json::json,
@@ -91,7 +94,10 @@ use {
         },
         time::sleep,
     },
-    wry::WebViewBuilderExtUnix,
+    wry::{
+        WebViewBuilder,
+        WebViewBuilderExtUnix,
+    },
 };
 
 #[derive(Deserialize)]
@@ -164,8 +170,8 @@ impl AargvarkFromStr for ArgKv {
         });
     }
 
-    fn build_help_pattern(_state: &mut aargvark::HelpState) -> aargvark::HelpPattern {
-        return aargvark::HelpPattern(vec![HelpPatternElement::Type("KEY=VALUE".to_string())]);
+    fn build_help_pattern(_state: &mut HelpState) -> HelpPattern {
+        return HelpPattern(vec![HelpPatternElement::Type("KEY=VALUE".to_string())]);
     }
 }
 
@@ -198,7 +204,7 @@ struct IPCReqCommand {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
-struct IPCReqIndependentCommand {
+struct IPCReqDetachedCommand {
     command: Vec<String>,
     /// By default uses the working directory of `wongus`.
     #[serde(default)]
@@ -227,7 +233,7 @@ enum IPCReqBody {
     Log(String),
     Read(PathBuf),
     RunCommand(IPCReqCommand),
-    RunIndependent(IPCReqIndependentCommand),
+    RunDetachedCommand(IPCReqDetachedCommand),
     StreamCommand(IPCReqStreamCommand),
 }
 
@@ -262,10 +268,10 @@ enum WindowIpc {
 fn main() {
     fn inner() -> Result<(), loga::Error> {
         let args = vark::<Args>();
-        let log = StandardLog::new().with_flags(if args.debug.is_some() {
-            &[StandardFlag::Error, StandardFlag::Warning, StandardFlag::Info, StandardFlag::Debug]
+        let log = Log::new_root(if args.debug.is_some() {
+            loga::DEBUG
         } else {
-            &[StandardFlag::Error, StandardFlag::Warning, StandardFlag::Info]
+            loga::INFO
         });
         let content_root = args.content_root.canonicalize().context("Error making content path absolute")?;
         let config_path = content_root.join("config.json");
@@ -382,12 +388,12 @@ fn main() {
         gtk_window.add(&default_vbox);
         gtk_window.show_all();
         let window = tao::window::Window::new_from_gtk_window(event_loop.deref(), gtk_window).unwrap();
-        window.set_skip_taskbar(true);
+        window.set_skip_taskbar(true).unwrap();
 
         // Webview
         let (ipc_req_tx, mut ipc_req_rx) = unbounded_channel::<Vec<u8>>();
         let webview = {
-            let mut webview = wry::WebViewBuilder::new_gtk(&default_vbox);
+            let mut webview = WebViewBuilder::new();
             webview = webview.with_transparent(true);
             webview = webview.with_ipc_handler({
                 move |req| {
@@ -406,7 +412,7 @@ fn main() {
             // 2. to intercept and log errors
             webview = webview.with_asynchronous_custom_protocol("filex".into(), {
                 let log = log.clone();
-                move |request, responder| {
+                move |_, request, responder| {
                     match (|| -> Result<http::Response<Cow<[u8]>>, loga::Error> {
                         let path = request.uri().path();
                         return Ok(
@@ -428,7 +434,7 @@ fn main() {
                         Ok(r) => responder.respond(r),
                         Err(e) => {
                             let e = e.context("Error making request");
-                            log.log_err(StandardFlag::Warning, e.clone());
+                            log.log_err(loga::WARN, e.clone());
                             responder.respond(
                                 http::Response::builder()
                                     .header(CONTENT_TYPE, "text/plain")
@@ -449,7 +455,7 @@ fn main() {
                     content_root.join("index.html").to_str().context("Content root path must be utf-8")?
                 ));
             }
-            webview.build().context("Error initializing webview")?
+            webview.build_gtk(&default_vbox).context("Error initializing webview")?
         };
 
         // More js initialization (dynamic)
@@ -499,7 +505,7 @@ fn main() {
                             Ok(r) => r,
                             Err(e) => {
                                 log.log_err(
-                                    StandardFlag::Warning,
+                                    loga::WARN,
                                     e.context_with(
                                         "Assertion! Error parsing IPC request",
                                         ea!(req = String::from_utf8_lossy(&req)),
@@ -517,7 +523,7 @@ fn main() {
                                         let resp = match async {
                                             match req.body {
                                                 IPCReqBody::Log(message) => {
-                                                    log.log(StandardFlag::Info, format!("wongus.log: {}", message));
+                                                    log.log(loga::INFO, format!("wongus.log: {}", message));
                                                     return Ok(json!({ }));
                                                 },
                                                 IPCReqBody::Read(path) => {
@@ -543,8 +549,7 @@ fn main() {
                                                     for (k, v) in req.environment {
                                                         command.env(k, v);
                                                     }
-                                                    let log =
-                                                        StandardLog::new().fork(ea!(command = command.dbg_str()));
+                                                    let log = Log::new().fork(ea!(command = command.dbg_str()));
                                                     let res = select!{
                                                         res = command.output() => res,
                                                         _ = sleep(
@@ -576,7 +581,7 @@ fn main() {
                                                         "stderr": stderr
                                                     }));
                                                 },
-                                                IPCReqBody::RunIndependent(req) => {
+                                                IPCReqBody::RunDetachedCommand(req) => {
                                                     if req.command.is_empty() {
                                                         return Err(loga::err("Commandline is empty"));
                                                     }
@@ -615,9 +620,7 @@ fn main() {
                                                         for (k, v) in req.environment {
                                                             command.env(k, v);
                                                         }
-                                                        let log =
-                                                            StandardLog
-                                                            ::new().fork(ea!(command = command.dbg_str()));
+                                                        let log = Log::new().fork(ea!(command = command.dbg_str()));
                                                         let mut proc =
                                                             command
                                                                 .spawn()
@@ -662,13 +665,13 @@ fn main() {
                                                             }.await {
                                                                 Ok(_) => {
                                                                     log.log(
-                                                                        StandardFlag::Info,
+                                                                        loga::INFO,
                                                                         "Streaming command exited normally",
                                                                     );
                                                                 },
                                                                 Err(e) => {
                                                                     log.log_err(
-                                                                        StandardFlag::Warning,
+                                                                        loga::WARN,
                                                                         e.context(
                                                                             "Streaming command failed with error",
                                                                         ),
@@ -718,7 +721,7 @@ fn main() {
             // Handle requests from curl via uds
             let external_ipc = {
                 struct State {
-                    log: loga::StandardLog,
+                    log: loga::Log,
                     ipc_resp: EventLoopProxy<UserEvent>,
                     external_ipc: Arc<Mutex<HashMap<usize, oneshot::Sender<WindowIpcExternalBody>>>>,
                     ids: AtomicUsize,
@@ -787,10 +790,7 @@ fn main() {
                                 Err(e) => {
                                     state
                                         .log
-                                        .log_err(
-                                            StandardFlag::Error,
-                                            e.context("External ipc request to window failed"),
-                                        );
+                                        .log_err(loga::WARN, e.context("External ipc request to window failed"));
                                     return Ok(response_503());
                                 },
                             }
@@ -800,7 +800,7 @@ fn main() {
                             &listen,
                         ).log_with(
                             &log,
-                            StandardFlag::Warning,
+                            loga::WARN,
                             "Failed to clean up old usd socket",
                             ea!(path = listen.to_string_lossy()),
                         );
@@ -834,7 +834,7 @@ fn main() {
                                     }.await {
                                         Ok(_) => (),
                                         Err(e) => {
-                                            log.log_err(StandardFlag::Debug, e.context("Error serving connection"));
+                                            log.log_err(loga::DEBUG, e.context("Error serving connection"));
                                         },
                                     }
                                 }
@@ -877,10 +877,7 @@ fn main() {
                                 match webview.evaluate_script(&script) {
                                     Ok(_) => { },
                                     Err(e) => {
-                                        log.log_err(
-                                            StandardFlag::Error,
-                                            e.context("Error executing ipc response script"),
-                                        );
+                                        log.log_err(loga::WARN, e.context("Error executing ipc response script"));
                                     },
                                 };
                             },
