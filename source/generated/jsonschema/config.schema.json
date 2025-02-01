@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Config",
+  "type": "object",
+  "properties": {
+    "attach_bottom": {
+      "description": "Attach the bottom of the window to the bottom of the screen, stretching if the opposite is also attached.",
+      "default": false,
+      "type": "boolean"
+    },
+    "attach_left": {
+      "description": "Attach the left of the window to the left of the screen, stretching if the opposite is also attached.",
+      "default": false,
+      "type": "boolean"
+    },
+    "attach_right": {
+      "description": "Attach the right of the window to the right of the screen, stretching if the opposite is also attached.",
+      "default": false,
+      "type": "boolean"
+    },
+    "attach_top": {
+      "description": "Attach the top of the window to the top of the screen, stretching if the opposite is also attached.",
+      "default": false,
+      "type": "boolean"
+    },
+    "enable_keyboard": {
+      "description": "Enable keyboard interaction (enables keyboard focus, required for keyboard interaction).",
+      "default": false,
+      "type": "boolean"
+    },
+    "height": {
+      "description": "If top or bottom aren't attached, specify the window height.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/P2"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "listen": {
+      "description": "Http over unix domain socket for `curl`-based IPC.",
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "monitor_index": {
+      "description": "Monitor to put the wongus on.",
+      "default": null,
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "minimum": 0.0
+    },
+    "monitor_model": {
+      "description": "Monitor to put the wongus on. Any monitor with the model containing this string will match (case insensitive).",
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "description": "Window title.",
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "width": {
+      "description": "If left or right aren't attached, specify the window width.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/P2"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "P2": {
+      "oneOf": [
+        {
+          "description": "Not pixels, but a delusion that will become a pixel once a scaling factor is applied.",
+          "type": "object",
+          "required": [
+            "logical"
+          ],
+          "properties": {
+            "logical": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Percent of monitor size (0-100).",
+          "type": "object",
+          "required": [
+            "percent"
+          ],
+          "properties": {
+            "percent": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

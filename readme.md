@@ -77,10 +77,10 @@ You can alternatively (instead of serving static files) serve content from a ser
 
 # Javascript API
 
-This documentation might get out of sync - but you can use the provided `wongus.d.ts` file like:
+This documentation might get out of sync - but you can use the provided [`wongus.d.ts`](./source/wongus.d.ts) file like:
 
 ```
-/// <reference path="../wongus/wongus.d.ts" />
+/// <reference path="https://raw.githubusercontent.com/andrewbaxter/wongus/refs/heads/master/source/wongus.d.ts" />
 ```
 
 Wongus adds a few things to `window` which are of particular relevance to panel bar thing designers.

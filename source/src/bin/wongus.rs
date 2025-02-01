@@ -94,65 +94,15 @@ use {
         },
         time::sleep,
     },
+    wongus::{
+        Config,
+        P2,
+    },
     wry::{
         WebViewBuilder,
         WebViewBuilderExtUnix,
     },
 };
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum P2 {
-    /// Not pixels, but a delusion that will become a pixel once a scaling factor is
-    /// applied.
-    Logical(i32),
-    /// Percent of monitor size (0-100).
-    Percent(f64),
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct Config {
-    /// Monitor to put the wongus on.
-    #[serde(default)]
-    monitor_index: Option<usize>,
-    /// Monitor to put the wongus on. Any monitor with the model containing this string
-    /// will match (case insensitive).
-    #[serde(default)]
-    monitor_model: Option<String>,
-    /// Attach the top of the window to the top of the screen, stretching if the
-    /// opposite is also attached.
-    #[serde(default)]
-    attach_top: bool,
-    /// Attach the right of the window to the right of the screen, stretching if the
-    /// opposite is also attached.
-    #[serde(default)]
-    attach_right: bool,
-    /// Attach the bottom of the window to the bottom of the screen, stretching if the
-    /// opposite is also attached.
-    #[serde(default)]
-    attach_bottom: bool,
-    /// Attach the left of the window to the left of the screen, stretching if the
-    /// opposite is also attached.
-    #[serde(default)]
-    attach_left: bool,
-    /// If left or right aren't attached, specify the window width.
-    #[serde(default)]
-    width: Option<P2>,
-    /// If top or bottom aren't attached, specify the window height.
-    #[serde(default)]
-    height: Option<P2>,
-    /// Enable keyboard interaction (enables keyboard focus, required for keyboard
-    /// interaction).
-    #[serde(default)]
-    enable_keyboard: bool,
-    /// Window title.
-    #[serde(default)]
-    title: Option<String>,
-    /// Http over unix domain socket for `curl`-based IPC.
-    #[serde(default)]
-    listen: Option<PathBuf>,
-}
 
 struct ArgKv {
     k: String,
@@ -400,7 +350,7 @@ fn main() {
                     _ = ipc_req_tx.send(req.into_body().into_bytes());
                 }
             });
-            webview = webview.with_initialization_script(include_str!("setup.js"));
+            webview = webview.with_initialization_script(include_str!("../setup.js"));
             webview = webview.with_back_forward_navigation_gestures(false);
             webview = webview.with_devtools(true);
 
