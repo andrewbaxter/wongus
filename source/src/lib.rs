@@ -17,7 +17,7 @@ pub enum P2 {
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Config {
-    #[serde(skip, rename = "$schema")]
+    #[serde(rename = "$schema")]
     pub _schema: Option<String>,
     /// Monitor to put the wongus on.
     #[serde(default)]
