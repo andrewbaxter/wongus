@@ -14,9 +14,31 @@ let
     }
   );
 in
-naersk.buildPackage { }
-// {
-  src = ./.;
+naersk.buildPackage ({ }
+  // {
+  root = ./.;
+  nativeBuildInputs = [
+    pkgs.pkg-config
+    pkgs.cargo
+    pkgs.rustc
+    pkgs.rustPlatform.bindgenHook
+    pkgs.makeWrapper
+  ];
+  buildInputs = [
+    pkgs.at-spi2-atk
+    pkgs.atkmm
+    pkgs.cairo
+    pkgs.gdk-pixbuf
+    pkgs.glib
+    pkgs.gtk3
+    pkgs.harfbuzz
+    pkgs.librsvg
+    pkgs.libsoup_3
+    pkgs.pango
+    pkgs.webkitgtk_4_1
+    pkgs.gtk-layer-shell
+    pkgs.openssl
+  ];
 }
   // (if (builtins.length wrapPackages) > 0 then {
   postInstall =
@@ -27,3 +49,4 @@ naersk.buildPackage { }
       wrapProgram $out/bin/wongus --prefix PATH : ${path}
     '';
 } else { })
+  // { })
