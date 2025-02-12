@@ -85,7 +85,6 @@ window.wongus = {
   env: new Map(),
   args: new Map(),
   log: async (message) => {
-    var message1 = message;
     if (!(message instanceof String)) {
       message = JSON.stringify(message);
     }
@@ -101,7 +100,6 @@ window.wongus = {
     return await wongus_ipc({ run_detached_command: args });
   },
   stream_command: async (args) => {
-    const cb = args.cb;
     const cb_id = next_stream_command_id++;
     window._wongus.stream_cbs.set(cb_id, args.cb);
     return await wongus_ipc({

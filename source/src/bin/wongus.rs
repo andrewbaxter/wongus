@@ -635,9 +635,13 @@ fn main() {
                                             }
                                         }.await {
                                             Ok(r) => r,
-                                            Err(e) => json!({
-                                                "err": e.to_string()
-                                            }),
+                                            Err(e) => {
+                                                let out = json!({
+                                                    "err": e.to_string()
+                                                });
+                                                log.log_err(loga::DEBUG, e.context("Error processing IPC message"));
+                                                out
+                                            },
                                         };
                                         match ipc_resp.send_event(
                                             UserEvent::Script(
@@ -649,7 +653,12 @@ fn main() {
                                             ),
                                         ) {
                                             Ok(_) => { },
-                                            Err(_) => { },
+                                            Err(e) => {
+                                                log.log_err(
+                                                    loga::DEBUG,
+                                                    loga::err(e).context("Error sending IPC response"),
+                                                );
+                                            },
                                         };
                                     }
                                 });
