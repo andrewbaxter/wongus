@@ -23,6 +23,8 @@ naersk.buildPackage ({ }
     pkgs.rustc
     pkgs.rustPlatform.bindgenHook
     pkgs.makeWrapper
+    # This magically wraps the program with
+    pkgs.wrapGAppsHook3
   ];
   buildInputs = [
     pkgs.at-spi2-atk
