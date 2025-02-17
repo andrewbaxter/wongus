@@ -4,7 +4,7 @@ use {
     std::path::PathBuf,
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, JsonSchema, Clone, Copy)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum P2 {
     /// Not pixels, but a delusion that will become a pixel once a scaling factor is
@@ -14,7 +14,7 @@ pub enum P2 {
     Percent(f64),
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[derive(Deserialize, JsonSchema, Clone)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct Config {
     #[serde(rename = "$schema", skip_serializing)]

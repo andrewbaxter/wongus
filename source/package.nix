@@ -1,4 +1,4 @@
-{ pkgs, lib, wrapPackages }:
+{ pkgs, lib }:
 let
   fenix = import (fetchTarball "https://github.com/nix-community/fenix/archive/1a79901b0e37ca189944e24d9601c8426675de50.zip") { };
   naersk = pkgs.callPackage (fetchTarball "https://github.com/nix-community/naersk/archive/378614f37a6bee5a3f2ef4f825a73d948d3ae921.zip") (
@@ -23,7 +23,7 @@ naersk.buildPackage ({ }
     pkgs.rustc
     pkgs.rustPlatform.bindgenHook
     pkgs.makeWrapper
-    # This magically wraps the program with
+    # This magically wraps the program with env vars from (somewhere?)
     pkgs.wrapGAppsHook3
   ];
   buildInputs = [
@@ -41,14 +41,4 @@ naersk.buildPackage ({ }
     pkgs.gtk-layer-shell
     pkgs.openssl
   ];
-}
-  // (if (builtins.length wrapPackages) > 0 then {
-  postInstall =
-    let
-      path = (lib.strings.concatStringsSep ":" ([ "$out/bin" ] ++ (map (p: "${p}/bin") wrapPackages)));
-    in
-    ''
-      wrapProgram $out/bin/wongus --prefix PATH : ${path}
-    '';
-} else { })
-  // { })
+})

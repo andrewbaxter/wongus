@@ -10,13 +10,23 @@ use {
         Aargvark,
     },
     gtk::{
-        glib::object::CastNone,
+        gdk::{
+            Display,
+            Monitor,
+            Screen,
+        },
+        glib::{
+            CastNone,
+            ObjectExt,
+        },
+        main_quit,
         prelude::{
             ContainerExt,
             GtkWindowExt,
             MonitorExt,
             WidgetExt,
         },
+        ApplicationWindow,
     },
     gtk_layer_shell::LayerShell,
     http::{
@@ -45,6 +55,7 @@ use {
     serde_json::json,
     std::{
         borrow::Cow,
+        cell::RefCell,
         collections::HashMap,
         convert::Infallible,
         env,
@@ -99,6 +110,7 @@ use {
         P2,
     },
     wry::{
+        PageLoadEvent,
         WebViewBuilder,
         WebViewBuilderExtUnix,
     },
@@ -231,6 +243,36 @@ fn main() {
                     &config_path,
                 ).context_with("Error reading config", ea!(path = config_path.to_string_lossy()))?,
             ).context_with("Error parsing config as json", ea!(path = config_path.to_string_lossy()))?;
+        if config.attach_left && config.attach_right {
+            if config.width.is_some() {
+                return Err(
+                    loga::err(
+                        "Both left and right sides of the window are attached to edges, width cannot be used but it is set in the config (should be null)",
+                    ),
+                );
+            }
+        } else if config.width.is_none() {
+            return Err(
+                loga::err(
+                    "Left or right window edge attachments aren't set so the width is not decided but width is missing from the config",
+                ),
+            );
+        }
+        if config.attach_top && config.attach_bottom {
+            if config.height.is_some() {
+                return Err(
+                    loga::err(
+                        "Both left and right sides of the window are attached to edges, height cannot be used but it is set in the config (should be null)",
+                    ),
+                );
+            }
+        } else if config.height.is_none() {
+            return Err(
+                loga::err(
+                    "Left or right window edge attachments aren't set so the height is not decided but height is missing from the config",
+                ),
+            );
+        }
 
         // Event loop
         enum UserEvent {
@@ -241,95 +283,106 @@ fn main() {
         let mut event_loop = event_loop::EventLoopBuilder::<UserEvent>::with_user_event().build();
 
         // Window
-        let display = gtk::gdk::Display::default().context("Couldn't open connection to display/windowing system")?;
-        let monitor = 'found_monitor : loop {
-            let mut monitors = vec![];
-            for i in 0 .. display.n_monitors() {
-                let m = display.monitor(i).and_downcast::<gtk::gdk::Monitor>().unwrap();
-                monitors.push(m);
-            }
-            if let Some(want_i) = config.monitor_index {
-                for (i, m) in monitors.iter().enumerate() {
-                    if want_i == i {
-                        break 'found_monitor m.clone();
-                    }
-                }
-            }
-            if let Some(text) = &config.monitor_model {
-                for m in &monitors {
-                    if m.model().unwrap_or_default().to_ascii_lowercase().contains(&text.to_ascii_lowercase()) {
-                        break 'found_monitor m.clone();
-                    }
-                }
-            }
-            if let Some(m) = display.primary_monitor() {
-                break 'found_monitor m;
-            }
-            if let Some(m) = monitors.into_iter().next() {
-                break 'found_monitor m;
-            }
-            return Err(loga::err("No monitors found"));
-        };
         let gtk_window = gtk::ApplicationWindow::new(event_loop.deref().gtk_app());
         gtk_window.init_layer_shell();
-        gtk_window.set_monitor(&monitor);
+        gtk_window.connect_destroy(|_| {
+            main_quit();
+        });
+        {
+            fn find_monitor(display: &Display, config: &Config) -> Option<Monitor> {
+                let mut monitors = vec![];
+                for i in 0 .. display.n_monitors() {
+                    let m = display.monitor(i).and_downcast::<gtk::gdk::Monitor>().unwrap();
+                    monitors.push(m);
+                }
+                if let Some(want_i) = config.monitor_index {
+                    for (i, m) in monitors.iter().enumerate() {
+                        if want_i == i {
+                            return Some(m.clone());
+                        }
+                    }
+                }
+                if let Some(text) = &config.monitor_model {
+                    for m in &monitors {
+                        if m.model().unwrap_or_default().to_ascii_lowercase().contains(&text.to_ascii_lowercase()) {
+                            return Some(m.clone());
+                        }
+                    }
+                }
+                if let Some(m) = display.primary_monitor() {
+                    return Some(m);
+                }
+                if let Some(m) = monitors.into_iter().next() {
+                    return Some(m);
+                }
+                return None;
+            }
+
+            fn update_monitor(config: &Config, window: &ApplicationWindow, monitor: &Monitor) {
+                window.set_monitor(monitor);
+                let have_geom = monitor.geometry();
+                if let Some(width) = config.width {
+                    window.set_width_request(match width {
+                        P2::Logical(p) => p,
+                        P2::Percent(p) => (have_geom.width() as f64 * p / 100.).ceil() as i32,
+                    });
+                }
+                if let Some(height) = config.height {
+                    window.set_height_request(match height {
+                        P2::Logical(p) => p,
+                        P2::Percent(p) => (have_geom.height() as f64 * p / 100.).ceil() as i32,
+                    });
+                }
+            }
+
+            // Cb
+            gtk_window.display().connect_monitor_added({
+                let config = config.clone();
+                let window = gtk_window.clone();
+                move |display, _| {
+                    if let Some(monitor) = find_monitor(display, &config) {
+                        update_monitor(&config, &window, &monitor);
+                    }
+                }
+            });
+
+            // Immediate
+            if let Some(monitor) = find_monitor(&gtk_window.display(), &config) {
+                update_monitor(&config, &gtk_window, &monitor);
+            }
+        }
+        {
+            fn update_screen(window: &ApplicationWindow, screen: &Screen) {
+                if let Some(visual) = screen.rgba_visual() {
+                    window.set_visual(Some(&visual));
+                }
+            }
+
+            // Cb
+            gtk_window.connect_screen_changed({
+                let config = config.clone();
+                move |window, screen| {
+                    if let Some(screen) = screen {
+                        update_screen(&window, screen);
+                    }
+                }
+            });
+
+            // Immediate
+            if let Some(screen) = GtkWindowExt::screen(&gtk_window) {
+                update_screen(&gtk_window, &screen);
+            }
+        }
         gtk_window.set_layer(gtk_layer_shell::Layer::Top);
         gtk_window.auto_exclusive_zone_enable();
         gtk_window.set_anchor(gtk_layer_shell::Edge::Top, config.attach_top);
         gtk_window.set_anchor(gtk_layer_shell::Edge::Right, config.attach_right);
         gtk_window.set_anchor(gtk_layer_shell::Edge::Bottom, config.attach_bottom);
         gtk_window.set_anchor(gtk_layer_shell::Edge::Left, config.attach_left);
-        if config.attach_left && config.attach_right {
-            if config.width.is_some() {
-                return Err(
-                    loga::err(
-                        "Both left and right sides of the window are attached to edges, width cannot be used but it is set in the config (should be null)",
-                    ),
-                );
-            }
-        } else {
-            let Some(width) = config.width else {
-                return Err(
-                    loga::err(
-                        "Left or right window edge attachments aren't set so the width is not decided but width is missing from the config",
-                    ),
-                );
-            };
-            gtk_window.set_width_request(match width {
-                P2::Logical(x) => x,
-                P2::Percent(p) => (monitor.geometry().width() as f64 * p / 100.).ceil() as i32,
-            });
-        }
-        if config.attach_top && config.attach_bottom {
-            if config.height.is_some() {
-                return Err(
-                    loga::err(
-                        "Both left and right sides of the window are attached to edges, height cannot be used but it is set in the config (should be null)",
-                    ),
-                );
-            }
-        } else {
-            let Some(height) = config.height else {
-                return Err(
-                    loga::err(
-                        "Left or right window edge attachments aren't set so the height is not decided but height is missing from the config",
-                    ),
-                );
-            };
-            gtk_window.set_height_request(match height {
-                P2::Logical(x) => x,
-                P2::Percent(p) => (monitor.geometry().height() as f64 * p / 100.).ceil() as i32,
-            });
-        }
         gtk_window.set_skip_pager_hint(true);
         gtk_window.set_deletable(false);
         gtk_window.set_keyboard_interactivity(config.enable_keyboard);
         gtk_window.set_resizable(false);
-        if let Some(screen) = GtkWindowExt::screen(&gtk_window) {
-            if let Some(visual) = screen.rgba_visual() {
-                gtk_window.set_visual(Some(&visual));
-            }
-        }
         gtk_window.set_app_paintable(true);
         gtk_window.set_decorated(false);
         gtk_window.stick();
@@ -340,6 +393,9 @@ fn main() {
         let window = tao::window::Window::new_from_gtk_window(event_loop.deref(), gtk_window).unwrap();
         window.set_skip_taskbar(true).unwrap();
 
+        // For killing running subprocs
+        let navigated = Arc::new(tokio::sync::Notify::new());
+
         // Webview
         let (ipc_req_tx, mut ipc_req_rx) = unbounded_channel::<Vec<u8>>();
         let webview = {
@@ -347,14 +403,15 @@ fn main() {
             webview = webview.with_transparent(true);
             webview = webview.with_ipc_handler({
                 move |req| {
-                    _ = ipc_req_tx.send(req.into_body().into_bytes());
+                    let body = req.into_body().into_bytes();
+                    ipc_req_tx.send(body).ignore();
                 }
             });
             webview = webview.with_initialization_script(include_str!("../setup.js"));
             webview = webview.with_back_forward_navigation_gestures(false);
             webview = webview.with_devtools(true);
 
-            // Custom proto:
+            // Custom proto: `filex://xPATH`
             //
             // 1. to avoid panic due to triple-slash in `file:///`:
             //    https://github.com/tauri-apps/wry/issues/1255
@@ -362,9 +419,10 @@ fn main() {
             // 2. to intercept and log errors
             webview = webview.with_asynchronous_custom_protocol("filex".into(), {
                 let log = log.clone();
+                let content_root = content_root.clone();
                 move |_, request, responder| {
                     match (|| -> Result<http::Response<Cow<[u8]>>, loga::Error> {
-                        let path = request.uri().path();
+                        let path = content_root.join(request.uri().path());
                         return Ok(
                             Response::builder()
                                 .header(
@@ -374,8 +432,8 @@ fn main() {
                                 .body(
                                     Cow::Owned(
                                         std::fs::read(
-                                            path,
-                                        ).context_with("Error reading requested file", ea!(path = path))?,
+                                            &path,
+                                        ).context_with("Error reading requested file", ea!(path = path.dbg_str()))?,
                                     ),
                                 )
                                 .unwrap(),
@@ -405,35 +463,46 @@ fn main() {
                     content_root.join("index.html").to_str().context("Content root path must be utf-8")?
                 ));
             }
+            {
+                let mut script = vec![];
+                for (k, v) in env::vars() {
+                    script.push(
+                        format!(
+                            "wongus.env.set({}, {});\n",
+                            serde_json::to_string(&k).unwrap(),
+                            serde_json::to_string(&v).unwrap()
+                        ),
+                    );
+                }
+                for kv in args.args {
+                    script.push(
+                        format!(
+                            "wongus.args.set({}, {});\n",
+                            serde_json::to_string(&kv.k).unwrap(),
+                            serde_json::to_string(&kv.v).unwrap()
+                        ),
+                    );
+                }
+                webview = webview.with_initialization_script(&script.join(""));
+            }
+            webview = webview.with_on_page_load_handler({
+                let navigated = navigated.clone();
+                move |ev, _| {
+                    let PageLoadEvent::Started = ev else {
+                        return;
+                    };
+                    navigated.notify_waiters();
+                }
+            });
             webview.build_gtk(&default_vbox).context("Error initializing webview")?
         };
 
-        // More js initialization (dynamic)
-        {
-            let mut script = vec![];
-            for (k, v) in env::vars() {
-                script.push(
-                    format!(
-                        "wongus.env.set({}, {});\n",
-                        serde_json::to_string(&k).unwrap(),
-                        serde_json::to_string(&v).unwrap()
-                    ),
-                );
-            }
-            for kv in args.args {
-                script.push(
-                    format!(
-                        "wongus.args.set({}, {});\n",
-                        serde_json::to_string(&kv.k).unwrap(),
-                        serde_json::to_string(&kv.v).unwrap()
-                    ),
-                );
-            }
-            webview.evaluate_script(&script.join("")).context("Error executing env/args setup script")?;
-        }
+        // For killing thread when program exits
+        let exited = Arc::new(tokio::sync::Notify::new());
 
         // Start thread for async/background processing (ipc, subcommands)
         spawn({
+            let exited = exited.clone();
             let ipc_resp = event_loop.create_proxy();
             let rt =
                 tokio::runtime::Builder::new_current_thread()
@@ -469,6 +538,7 @@ fn main() {
                                 tokio::spawn({
                                     let ipc_resp = ipc_resp.clone();
                                     let log = log.clone();
+                                    let navigated = navigated.clone();
                                     async move {
                                         let resp = match async {
                                             match req.body {
@@ -502,6 +572,9 @@ fn main() {
                                                     let log = Log::new().fork(ea!(command = command.dbg_str()));
                                                     let res = select!{
                                                         res = command.output() => res,
+                                                        _ = navigated.notified() => {
+                                                            return Err(loga::err("Navigation occurred"));
+                                                        },
                                                         _ = sleep(
                                                             Duration::from_secs(req.timeout_secs.unwrap_or(10))
                                                         ) => {
@@ -576,7 +649,7 @@ fn main() {
                                                                 .spawn()
                                                                 .stack_context(&log, "Error starting command")?;
                                                         async move {
-                                                            match async {
+                                                            let work = async {
                                                                 let reader =
                                                                     BufReader::new(proc.stdout.take().unwrap());
                                                                 let mut lines = reader.lines();
@@ -594,8 +667,8 @@ fn main() {
                                                                                     ),
                                                                                 ),
                                                                             ) {
-                                                                                Ok(_) => { },
-                                                                                Err(_) => { },
+                                                                                Ok(_) => (),
+                                                                                Err(_) => (),
                                                                             };
                                                                         },
                                                                         Ok(None) => {
@@ -612,18 +685,45 @@ fn main() {
                                                                     }
                                                                 }
                                                                 return Ok(());
-                                                            }.await {
+                                                            };
+                                                            let do_log = |level, m| {
+                                                                log.log(level, &m);
+                                                                match ipc_resp.send_event(
+                                                                    UserEvent::Script(
+                                                                        format!(
+                                                                            "console.log({});",
+                                                                            serde_json::to_string(&m).unwrap()
+                                                                        ),
+                                                                    ),
+                                                                ) {
+                                                                    Ok(_) => (),
+                                                                    Err(_) => (),
+                                                                }
+                                                            };
+                                                            match select!{
+                                                                _ = navigated.notified() => {
+                                                                    Err(loga::err("Navigation occurred"))
+                                                                },
+                                                                w = work => {
+                                                                    w
+                                                                }
+                                                            } {
                                                                 Ok(_) => {
-                                                                    log.log(
+                                                                    do_log(
                                                                         loga::INFO,
-                                                                        "Streaming command exited normally",
+                                                                        format!(
+                                                                            "Streaming command [{:?}] exited normally",
+                                                                            command
+                                                                        ),
                                                                     );
                                                                 },
                                                                 Err(e) => {
-                                                                    log.log_err(
+                                                                    do_log(
                                                                         loga::WARN,
-                                                                        e.context(
-                                                                            "Streaming command failed with error",
+                                                                        format!(
+                                                                            "Streaming command [{:?}] failed with error: {}",
+                                                                            command,
+                                                                            e
                                                                         ),
                                                                     );
                                                                 },
@@ -692,9 +792,8 @@ fn main() {
                     external_ipc: external_ipc_futures.clone(),
                     ids: AtomicUsize::new(1),
                 });
-                let listen = config.listen;
                 async move {
-                    if let Some(listen) = listen {
+                    if let Some(listen) = config.listen {
                         async fn handle_req(
                             state: Arc<State>,
                             req: Request<Incoming>,
@@ -758,29 +857,28 @@ fn main() {
                         remove_file(
                             &listen,
                         ).log_with(
-                            &log,
+                            &state.log,
                             loga::WARN,
                             "Failed to clean up old usd socket",
                             ea!(path = listen.to_string_lossy()),
                         );
                         let listener = UnixSocket::new_stream()?;
-                        listener.bind(&listen).stack_context(&log, "Error binding to uds socket address")?;
+                        listener.bind(&listen).stack_context(&state.log, "Error binding to uds socket address")?;
                         let listener = listener.listen(10).context("Error starting to listen on uds socket")?;
                         while let Some((conn, _)) = listener.accept().await.ok() {
                             tokio::spawn({
                                 let state = state.clone();
                                 async move {
-                                    let log = state.log.clone();
-                                    let state = state.clone();
-                                    match async move {
+                                    match async {
                                         hyper_util::server::conn::auto::Builder::new(
                                             hyper_util::rt::TokioExecutor::new(),
                                         )
                                             .serve_connection(
                                                 hyper_util::rt::TokioIo::new(conn),
-                                                hyper::service::service_fn(
-                                                    move |req| handle_req(state.clone(), req),
-                                                ),
+                                                hyper::service::service_fn({
+                                                    let state = state.clone();
+                                                    move |req| handle_req(state.clone(), req)
+                                                }),
                                             )
                                             .await
                                             .map_err(
@@ -793,12 +891,14 @@ fn main() {
                                     }.await {
                                         Ok(_) => (),
                                         Err(e) => {
-                                            log.log_err(loga::DEBUG, e.context("Error serving connection"));
+                                            state.log.log_err(loga::DEBUG, e.context("Error serving connection"));
                                         },
                                     }
                                 }
                             });
                         }
+                    } else {
+                        std::future::pending::<()>().await;
                     }
                     return Ok(()) as Result<(), loga::Error>;
                 }
@@ -807,10 +907,14 @@ fn main() {
             // Keep thread alive while stuff's going on
             move || rt.block_on(async move {
                 select!{
+                    _ = exited.notified() => {
+                    },
                     r = external_ipc => match r {
                         Ok(_) => {
+                            log.log(loga::WARN, "External async IPC task exited!");
                         },
                         Err(e) => {
+                            log.log(loga::DEBUG, "External async IPC task exited with error!");
                             match ipc_resp.send_event(UserEvent::ErrExit(e)) {
                                 Ok(_) => { },
                                 Err(_) => { },
@@ -818,6 +922,7 @@ fn main() {
                         }
                     },
                     _ = window_ipc => {
+                        log.log(loga::WARN, "Window async IPC task exited!");
                     },
                 }
             })
@@ -851,6 +956,7 @@ fn main() {
                 }
             }
         });
+        exited.notify_waiters();
         let err = err.lock().unwrap().take();
         if let Some(e) = err {
             return Err(e);
