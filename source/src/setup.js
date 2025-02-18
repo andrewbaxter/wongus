@@ -38,10 +38,8 @@ const wongus_ipc = (args) => {
   // Send req
   window.ipc.postMessage(
     JSON.stringify({
-      window: {
-        id: id,
-        body: args,
-      },
+      id: id,
+      body: args,
     })
   );
 
@@ -56,28 +54,13 @@ const wongus_ipc = (args) => {
  */
 window._wongus.external_ipc = (id, args) => {
   try {
-    const value = window.wongus.handle_external_ipc(args);
-    window.ipc.postMessage(
-      JSON.stringify({
-        external: {
-          id: id,
-          body: {
-            ok: value,
-          },
-        },
-      })
-    );
+    return {
+      ok: window.wongus.handle_external_ipc(args),
+    }
   } catch (e) {
-    window.ipc.postMessage(
-      JSON.stringify({
-        external: {
-          id: id,
-          body: {
-            err: e.toString(),
-          },
-        },
-      })
-    );
+    return {
+      err: e.toString(),
+    }
   }
 };
 

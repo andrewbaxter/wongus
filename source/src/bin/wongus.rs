@@ -15,9 +15,7 @@ use {
             Monitor,
             Screen,
         },
-        glib::{
-            CastNone,
-        },
+        glib::CastNone,
         main_quit,
         prelude::{
             ContainerExt,
@@ -54,6 +52,7 @@ use {
     serde_json::json,
     std::{
         borrow::Cow,
+        cell::RefCell,
         collections::HashMap,
         convert::Infallible,
         env,
@@ -345,7 +344,6 @@ fn main() {
 
             // Cb
             gtk_window.connect_screen_changed({
-                let config = config.clone();
                 move |window, screen| {
                     if let Some(screen) = screen {
                         update_screen(&window, screen);
@@ -899,8 +897,12 @@ fn main() {
                             },
                             UserEvent::ExternalScript(script, resp) => {
                                 match webview.evaluate_script_with_callback(&script, {
+                                    let resp = RefCell::new(Some(resp));
                                     move |json| {
                                         resp
+                                            .borrow_mut()
+                                            .take()
+                                            .unwrap()
                                             .send(serde_json::from_str(&json).unwrap())
                                             .map_err(|_| loga::err(""))
                                             .ignore();
