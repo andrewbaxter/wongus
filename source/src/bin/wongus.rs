@@ -17,7 +17,6 @@ use {
         },
         glib::{
             CastNone,
-            ObjectExt,
         },
         main_quit,
         prelude::{
@@ -55,7 +54,6 @@ use {
     serde_json::json,
     std::{
         borrow::Cow,
-        cell::RefCell,
         collections::HashMap,
         convert::Infallible,
         env,
@@ -201,30 +199,16 @@ enum IPCReqBody {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
-struct WindowIpcWindow {
+struct WindowIpc {
     id: usize,
     body: IPCReqBody,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
-enum WindowIpcExternalBody {
+enum ExternalIpcResp {
     Ok(serde_json::Value),
     Err(String),
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct WindowIpcExternal {
-    id: usize,
-    body: WindowIpcExternalBody,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum WindowIpc {
-    Window(WindowIpcWindow),
-    External(WindowIpcExternal),
 }
 
 fn main() {
@@ -277,6 +261,7 @@ fn main() {
         // Event loop
         enum UserEvent {
             Script(String),
+            ExternalScript(String, oneshot::Sender<ExternalIpcResp>),
             ErrExit(loga::Error),
         }
 
@@ -510,13 +495,10 @@ fn main() {
                     .build()
                     .context("Error starting ipc processor")?;
             let log = log.clone();
-            let external_ipc_futures =
-                Arc::new(Mutex::new(HashMap::<usize, oneshot::Sender<WindowIpcExternalBody>>::new()));
 
             // Handle ipc requests via js
             let window_ipc = {
                 let log = log.fork(ea!(ipc = "window"));
-                let external_ipc_futures = external_ipc_futures.clone();
                 let ipc_resp = ipc_resp.clone();
                 async move {
                     while let Some(req) = ipc_req_rx.recv().await {
@@ -533,246 +515,219 @@ fn main() {
                                 return;
                             },
                         };
-                        match req {
-                            WindowIpc::Window(req) => {
-                                tokio::spawn({
-                                    let ipc_resp = ipc_resp.clone();
-                                    let log = log.clone();
-                                    let navigated = navigated.clone();
-                                    async move {
-                                        let resp = match async {
-                                            match req.body {
-                                                IPCReqBody::Log(message) => {
-                                                    log.log(loga::INFO, format!("wongus.log: {}", message));
-                                                    return Ok(json!({ }));
+                        tokio::spawn({
+                            let ipc_resp = ipc_resp.clone();
+                            let log = log.clone();
+                            let navigated = navigated.clone();
+                            async move {
+                                let resp = match async {
+                                    match req.body {
+                                        IPCReqBody::Log(message) => {
+                                            log.log(loga::INFO, format!("wongus.log: {}", message));
+                                            return Ok(json!({ }));
+                                        },
+                                        IPCReqBody::Read(path) => {
+                                            return Ok(
+                                                json!(
+                                                    &String::from_utf8(
+                                                        tokio::fs::read(&path)
+                                                            .await
+                                                            .context("Error performing read command")?,
+                                                    ).context("File isn't valid utf-8")?
+                                                ),
+                                            );
+                                        },
+                                        IPCReqBody::RunCommand(req) => {
+                                            if req.command.is_empty() {
+                                                return Err(loga::err("Commandline is empty"));
+                                            }
+                                            let mut command = Command::new(&req.command[0]);
+                                            command.args(&req.command[1..]);
+                                            if let Some(cwd) = req.working_dir {
+                                                command.current_dir(&cwd);
+                                            }
+                                            for (k, v) in req.environment {
+                                                command.env(k, v);
+                                            }
+                                            let log = Log::new().fork(ea!(command = command.dbg_str()));
+                                            let res = select!{
+                                                res = command.output() => res,
+                                                _ = navigated.notified() => {
+                                                    return Err(loga::err("Navigation occurred"));
                                                 },
-                                                IPCReqBody::Read(path) => {
-                                                    return Ok(
-                                                        json!(
-                                                            &String::from_utf8(
-                                                                tokio::fs::read(&path)
-                                                                    .await
-                                                                    .context("Error performing read command")?,
-                                                            ).context("File isn't valid utf-8")?
-                                                        ),
+                                                _ = sleep(Duration::from_secs(req.timeout_secs.unwrap_or(10))) => {
+                                                    return Err(
+                                                        loga::err("Command execution duration exceeded timeout"),
                                                     );
-                                                },
-                                                IPCReqBody::RunCommand(req) => {
-                                                    if req.command.is_empty() {
-                                                        return Err(loga::err("Commandline is empty"));
-                                                    }
-                                                    let mut command = Command::new(&req.command[0]);
-                                                    command.args(&req.command[1..]);
-                                                    if let Some(cwd) = req.working_dir {
-                                                        command.current_dir(&cwd);
-                                                    }
-                                                    for (k, v) in req.environment {
-                                                        command.env(k, v);
-                                                    }
-                                                    let log = Log::new().fork(ea!(command = command.dbg_str()));
-                                                    let res = select!{
-                                                        res = command.output() => res,
-                                                        _ = navigated.notified() => {
-                                                            return Err(loga::err("Navigation occurred"));
-                                                        },
-                                                        _ = sleep(
-                                                            Duration::from_secs(req.timeout_secs.unwrap_or(10))
-                                                        ) => {
-                                                            return Err(
-                                                                loga::err(
-                                                                    "Command execution duration exceeded timeout",
-                                                                ),
-                                                            );
-                                                        }
-                                                    }.stack_context(&log, "Error starting command")?;
-                                                    let log = log.fork(ea!(output = res.dbg_str()));
-                                                    if !res.status.success() {
-                                                        return Err(
-                                                            log.err("Command exited with unsuccessful status"),
-                                                        );
-                                                    }
-                                                    let stdout =
-                                                        String::from_utf8(
-                                                            res.stdout,
-                                                        ).stack_context(&log, "stdout was not valid utf-8")?;
-                                                    let stderr =
-                                                        String::from_utf8(
-                                                            res.stderr,
-                                                        ).stack_context(&log, "stderr was not valid utf-8")?;
-                                                    return Ok(json!({
-                                                        "stdout": stdout,
-                                                        "stderr": stderr
-                                                    }));
-                                                },
-                                                IPCReqBody::RunDetachedCommand(req) => {
-                                                    if req.command.is_empty() {
-                                                        return Err(loga::err("Commandline is empty"));
-                                                    }
-                                                    let mut command = Command::new(&req.command[0]);
-                                                    command.args(&req.command[1..]);
-                                                    if let Some(cwd) = req.working_dir {
-                                                        command.current_dir(&cwd);
-                                                    }
-                                                    for (k, v) in req.environment {
-                                                        command.env(k, v);
-                                                    }
-                                                    let pid =
-                                                        command
-                                                            .spawn()
-                                                            .context_with(
-                                                                "Error starting command",
-                                                                ea!(command = command.dbg_str()),
-                                                            )?
-                                                            .id();
-                                                    return Ok(json!({
-                                                        "pid": pid
-                                                    }));
-                                                },
-                                                IPCReqBody::StreamCommand(req) => {
-                                                    tokio::spawn({
-                                                        let ipc_resp = ipc_resp.clone();
-                                                        if req.command.is_empty() {
-                                                            return Err(loga::err("Commandline is empty"));
-                                                        }
-                                                        let mut command = Command::new(&req.command[0]);
-                                                        command.stdout(std::process::Stdio::piped());
-                                                        command.args(&req.command[1..]);
-                                                        if let Some(cwd) = req.working_dir {
-                                                            command.current_dir(&cwd);
-                                                        }
-                                                        for (k, v) in req.environment {
-                                                            command.env(k, v);
-                                                        }
-                                                        let log = Log::new().fork(ea!(command = command.dbg_str()));
-                                                        let mut proc =
-                                                            command
-                                                                .spawn()
-                                                                .stack_context(&log, "Error starting command")?;
-                                                        async move {
-                                                            let work = async {
-                                                                let reader =
-                                                                    BufReader::new(proc.stdout.take().unwrap());
-                                                                let mut lines = reader.lines();
-                                                                loop {
-                                                                    match lines.next_line().await {
-                                                                        Ok(Some(line)) => {
-                                                                            match ipc_resp.send_event(
-                                                                                UserEvent::Script(
-                                                                                    format!(
-                                                                                        "(window._wongus.stream_cbs.get({}))({});",
-                                                                                        req.id,
-                                                                                        serde_json::to_string(
-                                                                                            &line,
-                                                                                        ).unwrap()
-                                                                                    ),
-                                                                                ),
-                                                                            ) {
-                                                                                Ok(_) => (),
-                                                                                Err(_) => (),
-                                                                            };
-                                                                        },
-                                                                        Ok(None) => {
-                                                                            break;
-                                                                        },
-                                                                        Err(e) => {
-                                                                            return Err(
-                                                                                e.stack_context(
-                                                                                    &log,
-                                                                                    "Error reading lines",
-                                                                                ),
-                                                                            );
-                                                                        },
-                                                                    }
-                                                                }
-                                                                return Ok(());
-                                                            };
-                                                            let do_log = |level, m| {
-                                                                log.log(level, &m);
-                                                                match ipc_resp.send_event(
-                                                                    UserEvent::Script(
-                                                                        format!(
-                                                                            "console.log({});",
-                                                                            serde_json::to_string(&m).unwrap()
+                                                }
+                                            }.stack_context(&log, "Error starting command")?;
+                                            let log = log.fork(ea!(output = res.dbg_str()));
+                                            if !res.status.success() {
+                                                return Err(log.err("Command exited with unsuccessful status"));
+                                            }
+                                            let stdout =
+                                                String::from_utf8(
+                                                    res.stdout,
+                                                ).stack_context(&log, "stdout was not valid utf-8")?;
+                                            let stderr =
+                                                String::from_utf8(
+                                                    res.stderr,
+                                                ).stack_context(&log, "stderr was not valid utf-8")?;
+                                            return Ok(json!({
+                                                "stdout": stdout,
+                                                "stderr": stderr
+                                            }));
+                                        },
+                                        IPCReqBody::RunDetachedCommand(req) => {
+                                            if req.command.is_empty() {
+                                                return Err(loga::err("Commandline is empty"));
+                                            }
+                                            let mut command = Command::new(&req.command[0]);
+                                            command.args(&req.command[1..]);
+                                            if let Some(cwd) = req.working_dir {
+                                                command.current_dir(&cwd);
+                                            }
+                                            for (k, v) in req.environment {
+                                                command.env(k, v);
+                                            }
+                                            let pid =
+                                                command
+                                                    .spawn()
+                                                    .context_with(
+                                                        "Error starting command",
+                                                        ea!(command = command.dbg_str()),
+                                                    )?
+                                                    .id();
+                                            return Ok(json!({
+                                                "pid": pid
+                                            }));
+                                        },
+                                        IPCReqBody::StreamCommand(req) => {
+                                            tokio::spawn({
+                                                let ipc_resp = ipc_resp.clone();
+                                                if req.command.is_empty() {
+                                                    return Err(loga::err("Commandline is empty"));
+                                                }
+                                                let mut command = Command::new(&req.command[0]);
+                                                command.stdout(std::process::Stdio::piped());
+                                                command.args(&req.command[1..]);
+                                                if let Some(cwd) = req.working_dir {
+                                                    command.current_dir(&cwd);
+                                                }
+                                                for (k, v) in req.environment {
+                                                    command.env(k, v);
+                                                }
+                                                let log = Log::new().fork(ea!(command = command.dbg_str()));
+                                                let mut proc =
+                                                    command.spawn().stack_context(&log, "Error starting command")?;
+                                                async move {
+                                                    let work = async {
+                                                        let reader = BufReader::new(proc.stdout.take().unwrap());
+                                                        let mut lines = reader.lines();
+                                                        loop {
+                                                            match lines.next_line().await {
+                                                                Ok(Some(line)) => {
+                                                                    match ipc_resp.send_event(
+                                                                        UserEvent::Script(
+                                                                            format!(
+                                                                                "(window._wongus.stream_cbs.get({}))({});",
+                                                                                req.id,
+                                                                                serde_json::to_string(&line).unwrap()
+                                                                            ),
                                                                         ),
-                                                                    ),
-                                                                ) {
-                                                                    Ok(_) => (),
-                                                                    Err(_) => (),
-                                                                }
-                                                            };
-                                                            match select!{
-                                                                _ = navigated.notified() => {
-                                                                    Err(loga::err("Navigation occurred"))
+                                                                    ) {
+                                                                        Ok(_) => (),
+                                                                        Err(_) => (),
+                                                                    };
                                                                 },
-                                                                w = work => {
-                                                                    w
-                                                                }
-                                                            } {
-                                                                Ok(_) => {
-                                                                    do_log(
-                                                                        loga::INFO,
-                                                                        format!(
-                                                                            "Streaming command [{:?}] exited normally",
-                                                                            command
-                                                                        ),
-                                                                    );
+                                                                Ok(None) => {
+                                                                    break;
                                                                 },
                                                                 Err(e) => {
-                                                                    do_log(
-                                                                        loga::WARN,
-                                                                        format!(
-                                                                            "Streaming command [{:?}] failed with error: {}",
-                                                                            command,
-                                                                            e
-                                                                        ),
+                                                                    return Err(
+                                                                        e.stack_context(&log, "Error reading lines"),
                                                                     );
                                                                 },
                                                             }
                                                         }
-                                                    });
-                                                    return Ok(json!({ }));
-                                                },
-                                            }
-                                        }.await {
-                                            Ok(r) => r,
-                                            Err(e) => {
-                                                let out = json!({
-                                                    "err": e.to_string()
-                                                });
-                                                log.log_err(loga::DEBUG, e.context("Error processing IPC message"));
-                                                out
-                                            },
-                                        };
-                                        match ipc_resp.send_event(
-                                            UserEvent::Script(
-                                                format!(
-                                                    "(window._wongus.responses.get({}))({});",
-                                                    req.id,
-                                                    serde_json::to_string(&resp).unwrap()
-                                                ),
-                                            ),
-                                        ) {
-                                            Ok(_) => { },
-                                            Err(e) => {
-                                                log.log_err(
-                                                    loga::DEBUG,
-                                                    loga::err(e).context("Error sending IPC response"),
-                                                );
-                                            },
-                                        };
+                                                        return Ok(());
+                                                    };
+                                                    let do_log = |level, m| {
+                                                        log.log(level, &m);
+                                                        match ipc_resp.send_event(
+                                                            UserEvent::Script(
+                                                                format!(
+                                                                    "console.log({});",
+                                                                    serde_json::to_string(&m).unwrap()
+                                                                ),
+                                                            ),
+                                                        ) {
+                                                            Ok(_) => (),
+                                                            Err(_) => (),
+                                                        }
+                                                    };
+                                                    match select!{
+                                                        _ = navigated.notified() => {
+                                                            Err(loga::err("Navigation occurred"))
+                                                        },
+                                                        w = work => {
+                                                            w
+                                                        }
+                                                    } {
+                                                        Ok(_) => {
+                                                            do_log(
+                                                                loga::INFO,
+                                                                format!(
+                                                                    "Streaming command [{:?}] exited normally",
+                                                                    command
+                                                                ),
+                                                            );
+                                                        },
+                                                        Err(e) => {
+                                                            do_log(
+                                                                loga::WARN,
+                                                                format!(
+                                                                    "Streaming command [{:?}] failed with error: {}",
+                                                                    command,
+                                                                    e
+                                                                ),
+                                                            );
+                                                        },
+                                                    }
+                                                }
+                                            });
+                                            return Ok(json!({ }));
+                                        },
                                     }
-                                });
-                            },
-                            WindowIpc::External(resp) => {
-                                external_ipc_futures
-                                    .lock()
-                                    .unwrap()
-                                    .remove(&resp.id)
-                                    .unwrap()
-                                    .send(resp.body)
-                                    .unwrap();
-                            },
-                        }
+                                }.await {
+                                    Ok(r) => r,
+                                    Err(e) => {
+                                        let out = json!({
+                                            "err": e.to_string()
+                                        });
+                                        log.log_err(loga::DEBUG, e.context("Error processing IPC message"));
+                                        out
+                                    },
+                                };
+                                match ipc_resp.send_event(
+                                    UserEvent::Script(
+                                        format!(
+                                            "(window._wongus.responses.get({}))({});",
+                                            req.id,
+                                            serde_json::to_string(&resp).unwrap()
+                                        ),
+                                    ),
+                                ) {
+                                    Ok(_) => { },
+                                    Err(e) => {
+                                        log.log_err(
+                                            loga::DEBUG,
+                                            loga::err(e).context("Error sending IPC response"),
+                                        );
+                                    },
+                                };
+                            }
+                        });
                     }
                 }
             };
@@ -782,14 +737,12 @@ fn main() {
                 struct State {
                     log: loga::Log,
                     ipc_resp: EventLoopProxy<UserEvent>,
-                    external_ipc: Arc<Mutex<HashMap<usize, oneshot::Sender<WindowIpcExternalBody>>>>,
                     ids: AtomicUsize,
                 }
 
                 let state = Arc::new(State {
                     log: log.fork(ea!(ipc = "external")),
                     ipc_resp: ipc_resp.clone(),
-                    external_ipc: external_ipc_futures.clone(),
                     ids: AtomicUsize::new(1),
                 });
                 async move {
@@ -816,31 +769,30 @@ fn main() {
                                         return Ok(response_400(e));
                                     },
                                 };
-                            state.external_ipc.lock().unwrap().insert(id, res_tx);
                             match state
                                 .ipc_resp
                                 .send_event(
-                                    UserEvent::Script(
+                                    UserEvent::ExternalScript(
                                         format!(
-                                            "window._wongus.external_ipc({}, {});",
+                                            "return window._wongus.external_ipc({}, {});",
                                             id,
                                             serde_json::to_string(&req).unwrap()
                                         ),
+                                        res_tx,
                                     ),
                                 ) {
                                 Ok(_) => { },
                                 Err(_) => {
-                                    state.external_ipc.lock().unwrap().remove(&id);
                                     return Ok(response_503());
                                 },
                             };
                             match res_rx.await {
                                 Ok(r) => {
                                     match r {
-                                        WindowIpcExternalBody::Ok(v) => {
+                                        ExternalIpcResp::Ok(v) => {
                                             return Ok(response_200_json(v));
                                         },
-                                        WindowIpcExternalBody::Err(v) => {
+                                        ExternalIpcResp::Err(v) => {
                                             return Ok(response_503_text(v));
                                         },
                                     }
@@ -942,6 +894,21 @@ fn main() {
                                     Ok(_) => { },
                                     Err(e) => {
                                         log.log_err(loga::WARN, e.context("Error executing ipc response script"));
+                                    },
+                                };
+                            },
+                            UserEvent::ExternalScript(script, resp) => {
+                                match webview.evaluate_script_with_callback(&script, {
+                                    move |json| {
+                                        resp
+                                            .send(serde_json::from_str(&json).unwrap())
+                                            .map_err(|_| loga::err(""))
+                                            .ignore();
+                                    }
+                                }) {
+                                    Ok(_) => { },
+                                    Err(e) => {
+                                        log.log_err(loga::WARN, e.context("Error executing external ipc cb"));
                                     },
                                 };
                             },
