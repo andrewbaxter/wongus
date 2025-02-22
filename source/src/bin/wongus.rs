@@ -277,6 +277,7 @@ fn main() {
                 let mut monitors = vec![];
                 for i in 0 .. display.n_monitors() {
                     let m = display.monitor(i).and_downcast::<gtk::gdk::Monitor>().unwrap();
+                    eprintln!("m {:?} {:?} {:?}", m.manufacturer(), m.model(), m.geometry());
                     monitors.push(m);
                 }
                 if let Some(want_i) = config.monitor_index {
@@ -323,10 +324,28 @@ fn main() {
             gtk_window.display().connect_monitor_added({
                 let config = config.clone();
                 let window = gtk_window.clone();
-                move |display, _| {
+                let log = log.clone();
+                move |display, monitor| {
+                    log.log(
+                        loga::DEBUG,
+                        format!("Monitor attached: {:?} {:?}", monitor.manufacturer(), monitor.model()),
+                    );
                     if let Some(monitor) = find_monitor(display, &config) {
+                        log.log(
+                            loga::DEBUG,
+                            format!("Chosing monitor: {:?} {:?}", monitor.manufacturer(), monitor.model()),
+                        );
                         update_monitor(&config, &window, &monitor);
                     }
+                }
+            });
+            gtk_window.display().connect_monitor_removed({
+                let log = log.clone();
+                move |_display, monitor| {
+                    log.log(
+                        loga::DEBUG,
+                        format!("Monitor detached: {:?} {:?}", monitor.manufacturer(), monitor.model()),
+                    );
                 }
             });
 
@@ -345,6 +364,7 @@ fn main() {
             // Cb
             gtk_window.connect_screen_changed({
                 move |window, screen| {
+                    eprintln!("ev screen changed");
                     if let Some(screen) = screen {
                         update_screen(&window, screen);
                     }
