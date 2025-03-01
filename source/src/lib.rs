@@ -12,6 +12,8 @@ pub enum P2 {
     Logical(i32),
     /// Percent of monitor size (0-100).
     Percent(f64),
+    /// Centimeters
+    Cm(f64),
 }
 
 #[derive(Deserialize, JsonSchema, Clone)]

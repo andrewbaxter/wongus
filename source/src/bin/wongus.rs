@@ -9,10 +9,9 @@ use {
         vark,
         Aargvark,
     },
+    flowcontrol::superif,
     gtk::{
         gdk::{
-            Display,
-            Monitor,
             Screen,
         },
         glib::CastNone,
@@ -269,91 +268,64 @@ fn main() {
         // Window
         let gtk_window = gtk::ApplicationWindow::new(event_loop.deref().gtk_app());
         gtk_window.init_layer_shell();
-        gtk_window.connect_destroy(|_| {
-            main_quit();
+        gtk_window.display().connect_monitor_removed({
+            let log = log.clone();
+            move |_display, monitor| {
+                log.log(
+                    loga::DEBUG,
+                    format!("Monitor detached: {:?} {:?}", monitor.manufacturer(), monitor.model()),
+                );
+                main_quit();
+            }
         });
-        {
-            fn find_monitor(display: &Display, config: &Config) -> Option<Monitor> {
-                let mut monitors = vec![];
-                for i in 0 .. display.n_monitors() {
-                    let m = display.monitor(i).and_downcast::<gtk::gdk::Monitor>().unwrap();
-                    eprintln!("m {:?} {:?} {:?}", m.manufacturer(), m.model(), m.geometry());
-                    monitors.push(m);
-                }
-                if let Some(want_i) = config.monitor_index {
-                    for (i, m) in monitors.iter().enumerate() {
-                        if want_i == i {
-                            return Some(m.clone());
-                        }
+        superif!({
+            let display = gtk_window.display();
+            let mut monitors = vec![];
+            for i in 0 .. display.n_monitors() {
+                monitors.push(display.monitor(i).and_downcast::<gtk::gdk::Monitor>().unwrap());
+            }
+            if let Some(want_i) = config.monitor_index {
+                for (i, m) in monitors.iter().enumerate() {
+                    if want_i == i {
+                        break 'found m.clone();
                     }
                 }
-                if let Some(text) = &config.monitor_model {
-                    for m in &monitors {
-                        if m.model().unwrap_or_default().to_ascii_lowercase().contains(&text.to_ascii_lowercase()) {
-                            return Some(m.clone());
-                        }
+            }
+            if let Some(text) = &config.monitor_model {
+                for m in &monitors {
+                    if m.model().unwrap_or_default().to_ascii_lowercase().contains(&text.to_ascii_lowercase()) {
+                        break 'found m.clone();
                     }
                 }
-                if let Some(m) = display.primary_monitor() {
-                    return Some(m);
-                }
-                if let Some(m) = monitors.into_iter().next() {
-                    return Some(m);
-                }
-                return None;
             }
-
-            fn update_monitor(config: &Config, window: &ApplicationWindow, monitor: &Monitor) {
-                window.set_monitor(monitor);
-                let have_geom = monitor.geometry();
-                if let Some(width) = config.width {
-                    window.set_width_request(match width {
-                        P2::Logical(p) => p,
-                        P2::Percent(p) => (have_geom.width() as f64 * p / 100.).ceil() as i32,
-                    });
-                }
-                if let Some(height) = config.height {
-                    window.set_height_request(match height {
-                        P2::Logical(p) => p,
-                        P2::Percent(p) => (have_geom.height() as f64 * p / 100.).ceil() as i32,
-                    });
-                }
+            if let Some(m) = display.primary_monitor() {
+                break 'found m;
             }
-
-            // Cb
-            gtk_window.display().connect_monitor_added({
-                let config = config.clone();
-                let window = gtk_window.clone();
-                let log = log.clone();
-                move |display, monitor| {
-                    log.log(
-                        loga::DEBUG,
-                        format!("Monitor attached: {:?} {:?}", monitor.manufacturer(), monitor.model()),
-                    );
-                    if let Some(monitor) = find_monitor(display, &config) {
-                        log.log(
-                            loga::DEBUG,
-                            format!("Chosing monitor: {:?} {:?}", monitor.manufacturer(), monitor.model()),
-                        );
-                        update_monitor(&config, &window, &monitor);
-                    }
-                }
-            });
-            gtk_window.display().connect_monitor_removed({
-                let log = log.clone();
-                move |_display, monitor| {
-                    log.log(
-                        loga::DEBUG,
-                        format!("Monitor detached: {:?} {:?}", monitor.manufacturer(), monitor.model()),
-                    );
-                }
-            });
-
-            // Immediate
-            if let Some(monitor) = find_monitor(&gtk_window.display(), &config) {
-                update_monitor(&config, &gtk_window, &monitor);
+            if let Some(m) = monitors.into_iter().next() {
+                break 'found m;
             }
-        }
+            return Err(loga::err("No suitable monitor found"));
+        } monitor ='found {
+            gtk_window.set_monitor(&monitor);
+
+            // Namespace - unknown, unused; workaround for gtklayershell (c) issue 135 and the
+            // rust bindings issue 37 to force remap after monitor lost
+            let have_geom = monitor.geometry();
+            if let Some(width) = config.width {
+                gtk_window.set_width_request(match width {
+                    P2::Logical(p) => p,
+                    P2::Percent(p) => (have_geom.width() as f64 * p / 100.).ceil() as i32,
+                    P2::Cm(p) => (have_geom.height() as f64 / monitor.width_mm() as f64 / 10. * p) as i32,
+                });
+            }
+            if let Some(height) = config.height {
+                gtk_window.set_height_request(match height {
+                    P2::Logical(p) => p,
+                    P2::Percent(p) => (have_geom.height() as f64 * p / 100.).ceil() as i32,
+                    P2::Cm(p) => (have_geom.height() as f64 / monitor.height_mm() as f64 / 10. * p) as i32,
+                });
+            }
+        });
         {
             fn update_screen(window: &ApplicationWindow, screen: &Screen) {
                 if let Some(visual) = screen.rgba_visual() {

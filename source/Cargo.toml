@@ -32,3 +32,4 @@ tokio = { version = "1", features = [
 ] }
 wry = "0.48"
 schemars = "0.8"
+flowcontrol = "0.2"
