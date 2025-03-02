@@ -73,6 +73,12 @@ window.wongus = {
     }
     return await wongus_ipc({ log: message });
   },
+  list_dir: async (path) => {
+    return await wongus_ipc({ list_dir: path });
+  },
+  file_exists: async (path) => {
+    return await wongus_ipc({ file_exists: path });
+  },
   read: async (path) => {
     return await wongus_ipc({ read: path });
   },

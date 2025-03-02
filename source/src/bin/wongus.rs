@@ -11,11 +11,8 @@ use {
     },
     flowcontrol::superif,
     gtk::{
-        gdk::{
-            Screen,
-        },
+        gdk::Screen,
         glib::CastNone,
-        main_quit,
         prelude::{
             ContainerExt,
             GtkWindowExt,
@@ -88,6 +85,7 @@ use {
         },
     },
     tokio::{
+        fs::read_dir,
         io::{
             AsyncBufReadExt,
             BufReader,
@@ -189,6 +187,8 @@ struct IPCReqStreamCommand {
 #[serde(rename_all = "snake_case")]
 enum IPCReqBody {
     Log(String),
+    ListDir(PathBuf),
+    FileExists(PathBuf),
     Read(PathBuf),
     RunCommand(IPCReqCommand),
     RunDetachedCommand(IPCReqDetachedCommand),
@@ -261,6 +261,7 @@ fn main() {
             Script(String),
             ExternalScript(String, oneshot::Sender<ExternalIpcResp>),
             ErrExit(loga::Error),
+            Exit,
         }
 
         let mut event_loop = event_loop::EventLoopBuilder::<UserEvent>::with_user_event().build();
@@ -270,12 +271,13 @@ fn main() {
         gtk_window.init_layer_shell();
         gtk_window.display().connect_monitor_removed({
             let log = log.clone();
+            let event_loop = event_loop.create_proxy();
             move |_display, monitor| {
                 log.log(
                     loga::DEBUG,
                     format!("Monitor detached: {:?} {:?}", monitor.manufacturer(), monitor.model()),
                 );
-                main_quit();
+                _ = event_loop.send_event(UserEvent::Exit);
             }
         });
         superif!({
@@ -478,7 +480,7 @@ fn main() {
         // Start thread for async/background processing (ipc, subcommands)
         spawn({
             let exited = exited.clone();
-            let ipc_resp = event_loop.create_proxy();
+            let event_loop = event_loop.create_proxy();
             let rt =
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -489,7 +491,7 @@ fn main() {
             // Handle ipc requests via js
             let window_ipc = {
                 let log = log.fork(ea!(ipc = "window"));
-                let ipc_resp = ipc_resp.clone();
+                let event_loop = event_loop.clone();
                 async move {
                     while let Some(req) = ipc_req_rx.recv().await {
                         let req = match serde_json::from_slice::<WindowIpc>(&req) {
@@ -506,7 +508,7 @@ fn main() {
                             },
                         };
                         tokio::spawn({
-                            let ipc_resp = ipc_resp.clone();
+                            let ipc_resp = event_loop.clone();
                             let log = log.clone();
                             let navigated = navigated.clone();
                             async move {
@@ -515,6 +517,39 @@ fn main() {
                                         IPCReqBody::Log(message) => {
                                             log.log(loga::INFO, format!("wongus.log: {}", message));
                                             return Ok(json!({ }));
+                                        },
+                                        IPCReqBody::ListDir(path) => {
+                                            let mut entries =
+                                                read_dir(&path)
+                                                    .await
+                                                    .context_with(
+                                                        "Error listing directory",
+                                                        ea!(path = path.dbg_str()),
+                                                    )?;
+                                            let mut out = vec![];
+                                            while let Some(entry) =
+                                                entries
+                                                    .next_entry()
+                                                    .await
+                                                    .context("Error reading directory entries")? {
+                                                let entry_path = entry.path();
+                                                let entry_path = match entry_path.to_str() {
+                                                    Some(e) => e,
+                                                    None => {
+                                                        log.log_with(
+                                                            loga::WARN,
+                                                            "Directory entry not valid utf-8, skipping",
+                                                            ea!(path = entry.path().to_string_lossy()),
+                                                        );
+                                                        continue;
+                                                    },
+                                                };
+                                                out.push(entry_path.to_string());
+                                            }
+                                            return Ok(serde_json::to_value(&out).unwrap());
+                                        },
+                                        IPCReqBody::FileExists(path) => {
+                                            return Ok(json!(path.exists()));
                                         },
                                         IPCReqBody::Read(path) => {
                                             return Ok(
@@ -732,7 +767,7 @@ fn main() {
 
                 let state = Arc::new(State {
                     log: log.fork(ea!(ipc = "external")),
-                    ipc_resp: ipc_resp.clone(),
+                    ipc_resp: event_loop.clone(),
                     ids: AtomicUsize::new(1),
                 });
                 async move {
@@ -857,7 +892,7 @@ fn main() {
                         },
                         Err(e) => {
                             log.log(loga::DEBUG, "External async IPC task exited with error!");
-                            match ipc_resp.send_event(UserEvent::ErrExit(e)) {
+                            match event_loop.send_event(UserEvent::ErrExit(e)) {
                                 Ok(_) => { },
                                 Err(_) => { },
                             };
@@ -910,9 +945,19 @@ fn main() {
                                 *err.lock().unwrap() = Some(e);
                                 *control_flow = ControlFlow::Exit;
                             },
+                            UserEvent::Exit => {
+                                *control_flow = ControlFlow::Exit;
+                            },
                         }
                     },
-                    Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *control_flow = ControlFlow::Exit,
+                    Event::WindowEvent { event, .. } => {
+                        match event {
+                            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                                *control_flow = ControlFlow::Exit;
+                            },
+                            _ => { },
+                        }
+                    },
                     _ => (),
                 }
             }

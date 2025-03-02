@@ -12,6 +12,18 @@ declare type Wongus = {
    */
   readonly log: (message: any) => void;
   /**
+   * List files in a directory.
+   * @param path Directory to list files in.
+   * @returns A list of file paths in the directory. Each path begins with the target directory's path (i.e. not just filenames, absolute only if listed directory path is absolute).
+   */
+  readonly list_dir: (path: string) => Promise<string[]>;
+  /**
+   * Check if a file or directory exists.
+   * @param path Path to check.
+   * @returns true if it exists, false otherwise
+   */
+  readonly file_exists: (path: string) => Promise<boolean>;
+  /**
    * Run a command and wait for it to exit, returning the stdout and stderr. The process is killed if it takes longer than `timeout_secs`.
    */
   readonly run_command: (args: {
