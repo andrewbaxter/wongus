@@ -217,7 +217,11 @@ fn main() {
         } else {
             loga::INFO
         });
-        let content_root = args.content_root.canonicalize().context("Error making content path absolute")?;
+        let content_root =
+            args
+                .content_root
+                .canonicalize()
+                .context_with("Error making content path absolute", ea!(path = args.content_root.dbg_str()))?;
         let config_path = content_root.join("config.json");
         let config =
             serde_json::from_slice::<Config>(
@@ -888,11 +892,12 @@ fn main() {
                     },
                     r = external_ipc => match r {
                         Ok(_) => {
-                            log.log(loga::WARN, "External async IPC task exited!");
+                            log.log(loga::WARN, "Subservice handle external IPC exited!");
                         },
                         Err(e) => {
-                            log.log(loga::DEBUG, "External async IPC task exited with error!");
-                            match event_loop.send_event(UserEvent::ErrExit(e)) {
+                            match event_loop.send_event(
+                                UserEvent::ErrExit(e.context("Subservice handling external IPC exited with error")),
+                            ) {
                                 Ok(_) => { },
                                 Err(_) => { },
                             };
