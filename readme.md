@@ -1,3 +1,5 @@
+![Pure beauty](./source/shot1.avif)
+
 # wongus
 
 This is a Wayland desktop panel... bar thing. Make buttons, show window titles, add sliders and other widgets, so on and so forth.
@@ -13,67 +15,29 @@ Clone and `cargo build --release`, which will create `target/release/wongus`. Yo
 # Use
 
 1. Create a directory for stuff like `/path/to/your/dir`
-2. In the stuff directory, create `config.json` (actually see `src/main.rs` `struct Config` for the source, but hopefully I'll remember to keep this up to date):
 
-   ```rust
-   enum P2 {
-      /// Not pixels, but a delusion that will become a pixel once a scaling factor is
-      /// applied.
-      Logical(i32),
-      /// Percent of monitor size (0-100).
-      Percent(f64),
-   }
-   struct Config {
-      /// Monitor to put the wongus on.
-      #[serde(default)]
-      monitor_index: Option<usize>,
-      /// Monitor to put the wongus on. Any monitor with the model containing this string
-      /// will match (case insensitive).
-      #[serde(default)]
-      monitor_model: Option<String>,
-      /// Attach the top of the window to the top of the screen, stretching if the
-      /// opposite is also attached.
-      #[serde(default)]
-      attach_top: bool,
-      /// Attach the right of the window to the right of the screen, stretching if the
-      /// opposite is also attached.
-      #[serde(default)]
-      attach_right: bool,
-      /// Attach the bottom of the window to the bottom of the screen, stretching if the
-      /// opposite is also attached.
-      #[serde(default)]
-      attach_bottom: bool,
-      /// Attach the left of the window to the left of the screen, stretching if the
-      /// opposite is also attached.
-      #[serde(default)]
-      attach_left: bool,
-      /// If left or right aren't attached, specify the window width.
-      #[serde(default)]
-      width: Option<P2>,
-      /// If top or bottom aren't attached, specify the window height.
-      #[serde(default)]
-      height: Option<P2>,
-      /// Enable keyboard interaction (enables keyboard focus, required for keyboard
-      /// interaction).
-      #[serde(default)]
-      enable_keyboard: bool,
-      /// Window title.
-      #[serde(default)]
-      title: Option<String>,
-      /// Http over unix domain socket for `curl`-based IPC.
-      #[serde(default)]
-      listen: Option<PathBuf>,
+1. Put your `index.html` (and `style.css` and `script.js` and any other assets - you _must_ have `index.html` though) in it.
+
+1. Add `config.json`, with contents like below:
+
+   ```json
+   {
+     "attach_left": true,
+     "attach_top": true,
+     "attach_bottom": true,
+     "width": {
+       "logical": 150
+     }
    }
    ```
 
-   P2 is used like `"height": { "percent": 100 }`
+   There's a schema for the config [here](./source/generated/jsonschema/config.schema.json). You can reference it in the root level field `$schema` to get VS Code autocomplete.
 
-3. Create `index.html` (and `style.css` and `script.js` and any other assets - you _must_ have `index.html` though), and add any other assets you want: images, fonts
 4. Run `wongus /path/to/your/dir`
 
-There's an example config dir in `example/` - try it out with `wongus ./example/`!
+There's an absolutely ugly example config dir in `example/` - try it out with `wongus ./example/`!
 
-You can alternatively (instead of serving static files) serve content from a server using `--server http://127.0.0.1:8080`. Static content in `/path/to/your/dir` will be ignored.
+You can alternatively (instead of serving static files) serve content from a server using `--server http://127.0.0.1:8080`. In that case only the `config.json` is used from your config directory.
 
 # Javascript API
 
@@ -188,3 +152,88 @@ On my system I didn't see a significant change in system resources when starting
 - Due to https://github.com/tauri-apps/wry/issues/1255 pages are currently loaded with `filex://x` schema rather than `file://`. `filex` is like `file` but there's a `x` host that's ignored.
 
 - There's a webkit issue https://github.com/tauri-apps/wry/issues/1252 with some Nvidia GPUs that makes them show a blank screen with compositing enabled. In my case, I think my GPU was working with proprietary drivers, and stopped working on Mesa (I needed Mesa for libvirt gpu acceleration though).
+
+# Snippets
+
+## An accurate clock
+
+This also does things like show the date all Japanese-style and switch between local + UTC when you click it in various places.
+
+You need to make `clockDate` and `clockTime` (text elements) to hold the time.
+
+```javascript
+const japanFormat = new Intl.DateTimeFormat("ja-JP", {
+  dateStyle: "long",
+  calendar: "japanese",
+});
+var dateWestern = true;
+var timeLocal = true;
+/**
+ * @param {Date} now
+ */
+const redrawClock = (now) => {
+  if (timeLocal) {
+    if (dateWestern) {
+      clockDate.textContent = `${now.getFullYear()}/${now.getMonth() + 1
+        }/${now.getDate()}`;
+    } else {
+      clockDate.textContent = japanFormat.format(now);
+    }
+    clockTime.textContent = `${now
+      .getHours()
+      .toString()
+      .padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
+  } else {
+    clockDate.textContent = `${now.getUTCFullYear()}/${now.getUTCMonth() + 1
+      }/${now.getUTCDate()}`;
+    clockTime.textContent = `${now
+      .getUTCHours()
+      .toString()
+      .padStart(2, "0")}:${now
+        .getUTCMinutes()
+        .toString()
+        .padStart(2, "0")} Z`;
+  }
+};
+clockDate.addEventListener("click", () => {
+  timeLocal = true;
+  dateWestern = !dateWestern;
+  redrawClock(new Date());
+});
+clockTime.addEventListener("click", () => {
+  timeLocal = !timeLocal;
+  redrawClock(new Date());
+});
+const clock = () => {
+  const now = new Date();
+
+  // Shown time - we refresh slightly early, so show the next minute by ~200ms
+  const showNow = new Date(now);
+  showNow.setMilliseconds(now.getMilliseconds() + 200);
+
+  // Schedule next update 100ms early to account for random delays.
+  //
+  // Time is calculated until the next shown time.
+  const next = new Date(showNow);
+  next.setMinutes(showNow.getMinutes() + 1, 0, 0);
+  const untilNext = next.getTime() - now.getTime() - 100;
+  setTimeout(() => clock(), untilNext);
+
+  redrawClock(showNow);
+};
+clock();
+```
+
+## Fake transparent background
+
+Blend effects don't work with normal wayland composition, but you can hack around it by taking a screenshot where the panel sits and using it as a background:
+
+```javascript
+const fakeBgPath = `${wongus.env.get("XDG_RUNTIME_DIR")}/wongus-shot.png`
+if (!(await wongus.file_exists(fakeBgPath))) {
+  await wongus.run_command({
+    command: ["grim", "-g", `${window.screenX},${window.screenY} ${window.outerWidth}x${window.outerHeight}`, fakeBgPath],
+  })
+}
+document.body.style.backgroundImage = `url('filex://x${fakeBgPath}')`
+```
