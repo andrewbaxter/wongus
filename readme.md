@@ -148,11 +148,13 @@ So I'd _guess_ not. Keep in mind that getting memory usage statistics on linux i
 
 On my system I didn't see a significant change in system resources when starting, but I have a lot running all the time so there's a lot of noise.
 
-# Caveats
+# Caveats, bugs, weird
 
 - Due to https://github.com/tauri-apps/wry/issues/1255 pages are currently loaded with `filex://x` schema rather than `file://`. `filex` is like `file` but there's a `x` host that's ignored.
 
 - There's a webkit issue https://github.com/tauri-apps/wry/issues/1252 with some Nvidia GPUs that makes them show a blank screen with compositing enabled. In my case, I think my GPU was working with proprietary drivers, and stopped working on Mesa (I needed Mesa for libvirt gpu acceleration though).
+
+- An issue with screen blanking causing the window to disappear was just fixed in `gtk-layer-shell` (as of 2025/3/26) - it may be a bit before it's released and/or your distro packages it.
 
 # Snippets
 
