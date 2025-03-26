@@ -3,7 +3,7 @@
 
 # wongus
 
-This is a Wayland desktop panel... bar thing. Make buttons, show window titles, add sliders and other widgets, so on and so forth.
+This is a Wayland desktop panel... bar thing. Make buttons, show window titles, add sliders and other widgets, so on and so forth. By writing normal html.
 
 I was trying `eww` when I realized I hated GTK's poor imitation of web standards even more than I hated web standards, and this was born.
 
