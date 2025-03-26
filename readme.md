@@ -1,4 +1,5 @@
 ![Pure beauty](./source/shot1.avif)
+<small>(the thing on the left, not the right)</small>
 
 # wongus
 
