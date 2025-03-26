@@ -3,7 +3,7 @@
 
 # wongus
 
-This is a Wayland desktop panel... bar thing. Make buttons, show window titles, add sliders and other widgets, so on and so forth by writing normal HTML, JS, and CSS.
+This is a Wayland desktop panel... bar thing using normal HTML, JS, and CSS. Make buttons, show window titles, add sliders and other widgets, so on and so forth.
 
 I was trying `eww` when I realized I hated GTK's poor imitation of web standards even more than I hated web standards, and this was born.
 
@@ -17,12 +17,13 @@ Clone and `cargo build --release`, which will create `target/release/wongus`. Yo
 
 1. Create a directory for stuff like `/path/to/your/dir`
 
-1. Put your `index.html` (and `style.css` and `script.js` and any other assets - you _must_ have `index.html` though) in it.
+1. Put your `index.html` in it (and `style.css` and `script.js` and any other assets - only `index.html` is required though).
 
-1. Add `config.json`, with contents like below:
+1. Also add `config.json` to it, with contents like below:
 
    ```json
    {
+     "$schema": "https://raw.githubusercontent.com/andrewbaxter/wongus/master/source/generated/jsonschema/config.schema.json",
      "attach_left": true,
      "attach_top": true,
      "attach_bottom": true,
@@ -32,13 +33,13 @@ Clone and `cargo build --release`, which will create `target/release/wongus`. Yo
    }
    ```
 
-   There's a schema for the config [here](./source/generated/jsonschema/config.schema.json). You can reference it in the root level field `$schema` to get VS Code autocomplete.
+   `$schema` is optional but if you add it VS Code will autocomplete fields and give you pro tips. Make sure you use the schema version that matches your install (maybe clone it and use a local path rather than a URL).
 
 4. Run `wongus /path/to/your/dir`
 
 There's an absolutely ugly example config dir in `example/` - try it out with `wongus ./example/`!
 
-You can alternatively (instead of serving static files) serve content from a server using `--server http://127.0.0.1:8080`. In that case only the `config.json` is used from your config directory.
+You can, instead of serving static files, reverse proxy another server using `--server http://127.0.0.1:8080`. In that case only the `config.json` is used from your config directory.
 
 # Javascript API
 
