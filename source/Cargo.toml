@@ -6,6 +6,7 @@ description = "Desktop widgets at the speed of internet standards"
 readme = "readme.md"
 repository = "https://github.com/andrewbaxter/wongus"
 license = "ISC"
+publish = false
 
 [dependencies]
 aargvark = "0.6"
