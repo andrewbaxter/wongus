@@ -25,9 +25,9 @@ let
       src = pkgs.fetchFromGitHub {
         owner = "wmww";
         repo = "gtk-layer-shell";
-        # https://github.com/wmww/gtk-layer-shell/pull/198/commits
-        rev = "56aae1e4c41d78cd535c7c8f75883fbce95d7de3";
-        hash = "sha256-9/pd4odCtFoIlJECHAHcpzdth1/ustaYHh7Nu4YJymo=";
+        # issue 211
+        rev = "0bc31ca504377fa716d6e32cb04afc5350851414";
+        sha256 = "sha256-bA0Pqp6+msvCz/VKzHe9dq6jvtvlh1giMgtf4byQP6A=";
       };
     })
   );
@@ -60,8 +60,5 @@ naersk.buildPackage (
       layershell
       pkgs.openssl
     ];
-    postInstall = ''
-      ${pkgs.coreutils}/bin/ln -s ${layershell} $out/used_layershell
-    '';
   }
 )
